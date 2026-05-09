@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.phoenix/
+.DS_Store
+
+# Development-only docs — never committed, never pushed
+CLAUDE.md
+.claude/
+context/
