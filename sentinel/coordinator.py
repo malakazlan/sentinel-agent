@@ -12,16 +12,16 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from sentinel.constants import COORDINATOR_MODEL
 from sentinel.prompts import load_prompt
 from sentinel.tools.phoenix_traces import get_recent_traces
 
 _APP_NAME = "sentinel"
 _USER_ID = "local-dev"
-_MODEL = "gemini-2.5-flash"
 
 coordinator = LlmAgent(
     name="coordinator",
-    model=_MODEL,
+    model=COORDINATOR_MODEL,
     instruction=load_prompt("coordinator"),
     description=(
         "Sentinel root agent. In Phase 1, a single-agent baseline with one tool "
