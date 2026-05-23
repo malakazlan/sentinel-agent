@@ -4,6 +4,8 @@ __pycache__/
 .env
 .phoenix/
 .DS_Store
+phoenix-server.log
+*.log
 
 # Development-only docs — never committed, never pushed
 CLAUDE.md
