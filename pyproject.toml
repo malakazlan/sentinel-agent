@@ -1,0 +1,14 @@
+[project]
+name = "sentinel"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "arize-phoenix-otel>=0.16.1",
+    "google-adk>=2.1.0",
+    "google-cloud-aiplatform>=1.153.1",
+    "openinference-instrumentation-google-adk>=0.1.15",
+    "opentelemetry-exporter-otlp>=1.41.1",
+    "pydantic>=2.13.4",
+    "python-dotenv>=1.2.2",
+    "streamlit>=1.57.0",
+]
