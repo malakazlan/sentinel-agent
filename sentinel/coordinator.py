@@ -13,6 +13,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from sentinel.prompts import load_prompt
+from sentinel.tools.phoenix_traces import get_recent_traces
 
 _APP_NAME = "sentinel"
 _USER_ID = "local-dev"
@@ -23,9 +24,11 @@ coordinator = LlmAgent(
     model=_MODEL,
     instruction=load_prompt("coordinator"),
     description=(
-        "Sentinel root agent. In Phase 0, a hello-world. In later phases, plans "
-        "investigations and delegates to sub-agents via A2A."
+        "Sentinel root agent. In Phase 1, a single-agent baseline with one tool "
+        "for Phoenix trace retrieval. In later phases, plans investigations and "
+        "delegates to sub-agents via A2A."
     ),
+    tools=[get_recent_traces],
 )
 
 _session_service = InMemorySessionService()
