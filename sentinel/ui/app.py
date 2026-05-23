@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from evals.time_to_response import annotate_latest_root_span  # noqa: E402
 from sentinel.coordinator import stream_coordinator  # noqa: E402
 from sentinel.observability.instrumentation import setup_tracing  # noqa: E402
 
@@ -25,6 +26,8 @@ if "agent_response" not in st.session_state:
     st.session_state.agent_response = ""
 if "last_input" not in st.session_state:
     st.session_state.last_input = ""
+if "last_eval" not in st.session_state:
+    st.session_state.last_eval = None
 
 phoenix_endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
 phoenix_project = os.environ.get("PHOENIX_PROJECT_NAME", "sentinel")
@@ -82,13 +85,25 @@ if st.button("Send", type="primary", disabled=not user_text):
         else:
             st.session_state.agent_records = records
             st.session_state.agent_response = response
+            try:
+                st.session_state.last_eval = annotate_latest_root_span()
+            except Exception as exc:
+                st.session_state.last_eval = None
+                st.warning(f"time_to_response eval failed: {exc}")
 
 if st.session_state.agent_response:
     st.markdown("**Coordinator:**")
     st.write(st.session_state.agent_response)
+    if st.session_state.last_eval:
+        st.metric(
+            "time_to_response",
+            f"{st.session_state.last_eval['latency_ms']:.0f} ms",
+            help="Wall-clock from input to final response, annotated on the Phoenix root span.",
+        )
     st.success(
         f"Trace emitted to Phoenix. Open {phoenix_endpoint} and look in the "
-        f"`{phoenix_project}` project for the nested span tree."
+        f"`{phoenix_project}` project for the nested span tree + the "
+        f"`time_to_response_ms` annotation."
     )
 elif st.session_state.agent_records:
     st.warning("Coordinator returned no final text. See sidebar for raw events.")
