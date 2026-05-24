@@ -47,16 +47,18 @@ async def _consume(user_text: str) -> tuple[list[dict], str]:
 
 def _render_record(rec: dict) -> None:
     kind = rec.get("kind")
+    author = rec.get("author") or "unknown"
+    tag = f"`@{author}`"
     if kind == "tool_call":
-        st.markdown(f"🔧 **{rec['tool']}**")
+        st.markdown(f"{tag} 🔧 **{rec['tool']}**")
         st.code(json.dumps(rec.get("args", {}), indent=2), language="json")
     elif kind == "tool_result":
-        st.markdown(f"⟵ result from `{rec['tool']}`")
+        st.markdown(f"{tag} ⟵ result from `{rec['tool']}`")
         st.text(rec.get("result_excerpt", ""))
     elif kind == "assistant_text":
-        st.markdown(f"💭 *{rec['text']}*")
+        st.markdown(f"{tag} 💭 *{rec['text']}*")
     elif kind == "final":
-        st.markdown("💬 final reply")
+        st.markdown(f"{tag} 💬 final reply")
 
 
 # ── main pane ──────────────────────────────────────────────────────────────

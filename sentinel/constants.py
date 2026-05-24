@@ -12,3 +12,4 @@ from __future__ import annotations
 # family (3 Flash for sub-agents, 3.1 Pro for Coordinator/Drafter) for the demo
 # and final hackathon submission. This file is where the swap happens — one line.
 COORDINATOR_MODEL = "gemini-2.5-flash-lite"
+SUBAGENT_MODEL = "gemini-2.5-flash-lite"  # → Gemini 3 Flash via Vertex at Phase 4

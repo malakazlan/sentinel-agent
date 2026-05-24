@@ -23,6 +23,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.constants import COORDINATOR_MODEL
 from sentinel.prompts import load_prompt
 from sentinel.tools.phoenix_traces import get_recent_traces
@@ -41,11 +42,13 @@ coordinator = LlmAgent(
     model=COORDINATOR_MODEL,
     instruction=load_prompt("coordinator"),
     description=(
-        "Sentinel root agent. In Phase 1, a single-agent baseline with one tool "
-        "for Phoenix trace retrieval. In later phases, plans investigations and "
-        "delegates to sub-agents via A2A."
+        "Sentinel root agent. In Phase 2, routes between a direct tool call for "
+        "quick lookups and the TraceAnalyzer sub-agent (via A2A) for deep "
+        "statistical analysis. In later phases, adds EvalRunner, RootCause, "
+        "Remediation, and Postmortem sub-agents."
     ),
     tools=[get_recent_traces],
+    sub_agents=[trace_analyzer],
     generate_content_config=_GENERATE_CONFIG,
 )
 
@@ -107,13 +110,16 @@ def _summarize_event(event: Any) -> list[dict]:
     """Convert one ADK ``Event`` into zero or more UI-facing records.
 
     Walks ``event.content.parts`` and emits a record per meaningful part:
-    function calls, function responses, and text. Returns an empty list for
-    events with no displayable content (e.g. action-only events).
+    function calls, function responses, and text. Each record carries the
+    emitting agent in ``author`` (e.g. ``"coordinator"`` or ``"trace_analyzer"``)
+    so the UI can group reasoning by agent. Returns an empty list for events
+    with no displayable content (e.g. action-only events).
     """
     if not event.content or not event.content.parts:
         return []
 
     is_final = event.is_final_response()
+    author = getattr(event, "author", "") or "unknown"
     records: list[dict] = []
     for part in event.content.parts:
         if getattr(part, "function_call", None) is not None:
@@ -121,6 +127,7 @@ def _summarize_event(event: Any) -> list[dict]:
             records.append(
                 {
                     "kind": "tool_call",
+                    "author": author,
                     "tool": fc.name,
                     "args": _normalize_args(fc.args),
                 }
@@ -130,6 +137,7 @@ def _summarize_event(event: Any) -> list[dict]:
             records.append(
                 {
                     "kind": "tool_result",
+                    "author": author,
                     "tool": fr.name,
                     "result_excerpt": _excerpt(fr.response),
                 }
@@ -138,6 +146,7 @@ def _summarize_event(event: Any) -> list[dict]:
             records.append(
                 {
                     "kind": "final" if is_final else "assistant_text",
+                    "author": author,
                     "text": part.text,
                 }
             )
