@@ -23,34 +23,140 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from google.adk.agents.readonly_context import ReadonlyContext
+
 from sentinel.agents.eval_runner import eval_runner
 from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.constants import COORDINATOR_MODEL
+from sentinel.memory.briefing import PriorContextBriefing
+from sentinel.memory.enforcement import enforce_first_route, enforce_skip_routes
+from sentinel.memory.self_introspection import before_coordinator_callback
 from sentinel.observability.phoenix_mcp import make_phoenix_mcp_toolset
 from sentinel.prompts import load_prompt
 from sentinel.tools.phoenix_traces import get_recent_traces
+
+_BRIEFING_PLACEHOLDER = "{prior_context_briefing}"
+
+
+def render_directive_block(briefing: PriorContextBriefing) -> str:
+    """Render a ``PriorContextBriefing`` as the directive block injected into the prompt.
+
+    The directive block uses MUST/MUST-NOT imperative language per ADR-009 —
+    the LLM is meant to follow these as plan-shaping directives, not weigh
+    them as hints. Each non-default directive is followed by its evidence
+    sentence (the audit trail that makes this a loop, not a guess).
+    """
+    if briefing.cold_start:
+        return (
+            "**Active directives from self-introspection:** none.\n"
+            "- cold_start: true (no prior history; routing per defaults below).\n"
+            "- stats: " + _format_stats(briefing.stats) + "\n\n"
+            "**Directive protocol:** no overrides this turn — fall back to the "
+            "default routing rules below."
+        )
+
+    lines = ["**Active directives from self-introspection:**", ""]
+    lines.append(f"- first_route: {briefing.first_route or 'none'}")
+    if briefing.first_route and briefing.evidence.get("first_route"):
+        lines.append(f"  - evidence: {briefing.evidence['first_route']}")
+    lines.append(f"- skip_routes: {list(briefing.skip_routes) or 'none'}")
+    if briefing.skip_routes and briefing.evidence.get("skip_routes"):
+        lines.append(f"  - evidence: {briefing.evidence['skip_routes']}")
+    lines.append(f"- must_eval_after: {str(briefing.must_eval_after).lower()}")
+    if briefing.must_eval_after and briefing.evidence.get("must_eval_after"):
+        lines.append(f"  - evidence: {briefing.evidence['must_eval_after']}")
+    lines.append(f"- default_hours_back: {briefing.default_hours_back}")
+    if briefing.evidence.get("default_hours_back"):
+        lines.append(f"  - evidence: {briefing.evidence['default_hours_back']}")
+    lines.append("")
+    lines.append(f"- stats: {_format_stats(briefing.stats)}")
+    lines.append("")
+    lines.append("**Directive protocol — MANDATORY:**")
+    lines.append(
+        "- If `first_route` is set AND the user message is not a greeting / "
+        "capability question, your FIRST action this turn MUST be that route. "
+        "Ignore the default 8-word heuristic; the directive wins."
+    )
+    lines.append(
+        "- If a sub-agent appears in `skip_routes`, you MUST NOT transfer to "
+        "it this turn, even if the user explicitly asks. Decline politely and "
+        "cite the evidence."
+    )
+    lines.append(
+        "- If `must_eval_after` is true, after delivering your main response "
+        "you MUST end the turn by transferring to `eval_runner`."
+    )
+    lines.append(
+        "- When you call `get_recent_traces`, use `default_hours_back` as the "
+        "`hours_back` argument unless the user explicitly names a different window."
+    )
+    return "\n".join(lines)
+
+
+def _format_stats(stats: dict) -> str:
+    if not stats:
+        return "n/a"
+    keys = (
+        "n_total",
+        "n_error",
+        "n_hallucinated",
+        "n_faithful",
+        "median_latency_ms",
+        "lookback_hours",
+    )
+    parts = [f"{k}={stats[k]}" for k in keys if k in stats]
+    return " ".join(parts) if parts else "n/a"
+
+
+def _coordinator_instruction(ctx: ReadonlyContext) -> str:
+    """Render the Coordinator's prompt with the active directive block substituted.
+
+    Loads the markdown template, builds the directive block from whatever
+    ``before_coordinator_callback`` stored under ``"prior_context_briefing"``,
+    and substitutes at the ``{prior_context_briefing}`` placeholder. If state
+    is missing (callback failed) or holds an unexpected type, falls back to a
+    neutral "introspection unavailable" block so the agent still runs.
+    """
+    base = load_prompt("coordinator")
+    raw = ctx.state.get("prior_context_briefing")
+    if isinstance(raw, PriorContextBriefing):
+        directive_block = render_directive_block(raw)
+    else:
+        directive_block = (
+            "**Active directives from self-introspection:** unavailable "
+            "(introspection has not run or stored an unexpected payload). "
+            "Route per default rules below."
+        )
+    return base.replace(_BRIEFING_PLACEHOLDER, directive_block)
 
 _APP_NAME = "sentinel"
 _USER_ID = "local-dev"
 _RESULT_EXCERPT_CHARS = 280
 
-# Low temperature: tool-calling decisions should be near-deterministic. Default
-# Gemini temperature (~1.0) made the model sometimes greet instead of calling
-# the tool on the first turn — Phase 1 demands consistent tool use.
-_GENERATE_CONFIG = types.GenerateContentConfig(temperature=0.2)
+# Zero temperature: Phase 3 directive enforcement demands maximum prompt
+# adherence. Even at 0.2 the dev model (gemini-2.5-flash-lite) ignored
+# MUST-language directives in plan-determinism integration tests. The demo
+# eventually runs on Gemini 3 (ADR-008 axis A) which follows instructions
+# far more reliably; until that swap, temperature=0 buys us what determinism
+# the weak model can offer.
+_GENERATE_CONFIG = types.GenerateContentConfig(temperature=0.0)
 
 coordinator = LlmAgent(
     name="coordinator",
     model=COORDINATOR_MODEL,
-    instruction=load_prompt("coordinator"),
+    instruction=_coordinator_instruction,
     description=(
-        "Sentinel root agent. In Phase 3, gains Phoenix MCP self-introspection "
-        "alongside its existing tool, TraceAnalyzer, and EvalRunner sub-agents. "
-        "In later phases, adds RootCause, Remediation, and Postmortem sub-agents."
+        "Sentinel root agent. In Phase 3, queries Phoenix MCP for prior-context "
+        "before every invocation (self-introspection) and routes to TraceAnalyzer "
+        "or EvalRunner sub-agents based on observed risk signals. In later phases, "
+        "adds RootCause, Remediation, and Postmortem sub-agents."
     ),
     tools=[get_recent_traces, make_phoenix_mcp_toolset()],
     sub_agents=[trace_analyzer, eval_runner],
     generate_content_config=_GENERATE_CONFIG,
+    before_agent_callback=before_coordinator_callback,
+    before_model_callback=enforce_first_route,
+    before_tool_callback=enforce_skip_routes,
 )
 
 _session_service = InMemorySessionService()
