@@ -26,6 +26,7 @@ from google.genai import types
 from sentinel.agents.eval_runner import eval_runner
 from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.constants import COORDINATOR_MODEL
+from sentinel.observability.phoenix_mcp import make_phoenix_mcp_toolset
 from sentinel.prompts import load_prompt
 from sentinel.tools.phoenix_traces import get_recent_traces
 
@@ -43,12 +44,11 @@ coordinator = LlmAgent(
     model=COORDINATOR_MODEL,
     instruction=load_prompt("coordinator"),
     description=(
-        "Sentinel root agent. In Phase 2, routes between a direct tool call for "
-        "quick lookups, the TraceAnalyzer sub-agent (deep statistical analysis), "
-        "and the EvalRunner sub-agent (quality evaluators). In later phases, "
-        "adds RootCause, Remediation, and Postmortem sub-agents."
+        "Sentinel root agent. In Phase 3, gains Phoenix MCP self-introspection "
+        "alongside its existing tool, TraceAnalyzer, and EvalRunner sub-agents. "
+        "In later phases, adds RootCause, Remediation, and Postmortem sub-agents."
     ),
-    tools=[get_recent_traces],
+    tools=[get_recent_traces, make_phoenix_mcp_toolset()],
     sub_agents=[trace_analyzer, eval_runner],
     generate_content_config=_GENERATE_CONFIG,
 )
