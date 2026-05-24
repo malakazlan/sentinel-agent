@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import contextmanager
 from datetime import datetime
 from statistics import median
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.mcp_tool import McpToolset
@@ -31,14 +32,40 @@ from sentinel.observability.phoenix_mcp import make_phoenix_mcp_toolset
 
 _logger = logging.getLogger(__name__)
 
+# Demo / test hook: when set (via ``briefing_override`` context manager),
+# ``synthesize_prior_context`` short-circuits and returns this object instead
+# of querying Phoenix MCP. Production code never touches this; only the
+# Streamlit cold-vs-warm demo and unit tests use it.
+_briefing_override: Optional[PriorContextBriefing] = None
+
+
+@contextmanager
+def briefing_override(briefing: PriorContextBriefing) -> Iterator[None]:
+    """Context manager that pins ``synthesize_prior_context``'s return value.
+
+    Used by the cold-vs-warm demo to control the briefing per-run for camera
+    reproducibility (ADR-009). The override is module-scoped; for parallel
+    invocations this would race, but the demo and tests are sequential.
+    """
+    global _briefing_override
+    _briefing_override = briefing
+    try:
+        yield
+    finally:
+        _briefing_override = None
+
 # Directive extraction thresholds. These are tuned for the demo path and
 # the Phase 2 sub-agent surface; revisit when Phase 4 adds more routes.
-_INTROSPECTION_LIMIT = 30
+_INTROSPECTION_LIMIT = 100
 _LOOKBACK_HOURS_DEFAULT = 24
 _PROJECT = "sentinel"
 
-_ERROR_CLUSTER_MIN_COUNT = 3        # raw count of recent ERROR root spans
-_ERROR_CLUSTER_MIN_RATIO = 0.30     # AND share of total
+# In a financial-services context, recent errors are always signal — not noise.
+# We require a meaningful raw count (>=3) so a single transient blip doesn't
+# steer routing, but we do NOT gate on share: ANY production system with a
+# handful of recent failures deserves depth-first investigation on the next
+# inbound request, regardless of total volume.
+_ERROR_CLUSTER_MIN_COUNT = 3
 _LOW_VOLUME_TOTAL = 3               # below this, widen the default window
 _LOW_VOLUME_HOURS_BACK = 24
 
@@ -72,7 +99,11 @@ async def synthesize_prior_context() -> PriorContextBriefing:
     - ``default_hours_back = 24`` iff recent volume < 3 traces; else 1.
     - ``skip_routes`` left empty by default — capability preserved for true
       redundancy but not the demo's headline mechanism.
+
+    Honors ``briefing_override`` for the demo and unit-test paths.
     """
+    if _briefing_override is not None:
+        return _briefing_override
     try:
         mcp = _get_mcp()
         tools = await mcp.get_tools()
@@ -179,12 +210,12 @@ def _derive_briefing(
 
     first_route: Optional[str] = None
     error_share = n_error / n_total if n_total > 0 else 0.0
-    if n_error >= _ERROR_CLUSTER_MIN_COUNT and error_share >= _ERROR_CLUSTER_MIN_RATIO:
+    if n_error >= _ERROR_CLUSTER_MIN_COUNT:
         first_route = "trace_analyzer"
         evidence["first_route"] = (
-            f"{n_error} of last {n_total} root spans were ERROR "
-            f"({int(error_share * 100)}% share); quick-tool summary would "
-            f"mask the failure mode — go depth-first."
+            f"{n_error} ERROR traces in last {n_total} root invocations "
+            f"({int(error_share * 100)}% of recent history); quick-tool "
+            f"summary would mask the failure mode — go depth-first."
         )
 
     must_eval_after = n_hallucinated >= 1

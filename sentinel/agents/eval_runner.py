@@ -14,6 +14,7 @@ from google.adk.agents import LlmAgent
 from google.genai import types
 
 from sentinel.constants import SUBAGENT_MODEL
+from sentinel.memory.enforcement import count_real_llm_calls
 from sentinel.prompts import load_prompt
 from sentinel.tools.run_eval import run_hallucination_eval
 
@@ -32,4 +33,5 @@ eval_runner = LlmAgent(
     generate_content_config=_GENERATE_CONFIG,
     disallow_transfer_to_parent=True,
     disallow_transfer_to_peers=True,
+    before_model_callback=count_real_llm_calls,
 )

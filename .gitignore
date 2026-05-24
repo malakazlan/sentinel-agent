@@ -7,6 +7,9 @@ __pycache__/
 phoenix-server.log
 *.log
 
+# Reproduction run artifacts (regeneratable via scripts/repro_cold_vs_warm.py)
+scripts/_repro.log
+
 # Development-only docs — never committed, never pushed
 CLAUDE.md
 .claude/

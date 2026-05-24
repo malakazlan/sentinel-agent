@@ -29,7 +29,11 @@ from sentinel.agents.eval_runner import eval_runner
 from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.constants import COORDINATOR_MODEL
 from sentinel.memory.briefing import PriorContextBriefing
-from sentinel.memory.enforcement import enforce_first_route, enforce_skip_routes
+from sentinel.memory.enforcement import (
+    count_real_llm_calls,
+    enforce_first_route,
+    enforce_skip_routes,
+)
 from sentinel.memory.self_introspection import before_coordinator_callback
 from sentinel.observability.phoenix_mcp import make_phoenix_mcp_toolset
 from sentinel.prompts import load_prompt
@@ -155,7 +159,9 @@ coordinator = LlmAgent(
     sub_agents=[trace_analyzer, eval_runner],
     generate_content_config=_GENERATE_CONFIG,
     before_agent_callback=before_coordinator_callback,
-    before_model_callback=enforce_first_route,
+    # Order matters: enforce_first_route may short-circuit; counter must come
+    # AFTER it so synthetic LlmResponses don't count toward real round-trips.
+    before_model_callback=[enforce_first_route, count_real_llm_calls],
     before_tool_callback=enforce_skip_routes,
 )
 

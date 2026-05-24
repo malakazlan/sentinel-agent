@@ -34,6 +34,42 @@ from sentinel.memory.briefing import PriorContextBriefing
 
 _FIRST_ROUTE_CONSUMED_KEY = "_first_route_consumed"
 
+# Module-level real-LLM-call counter — DEMO INSTRUMENTATION ONLY.
+# The cold-vs-warm panel's headline metric is "round-trip count" per ADR-009
+# narrative discipline (count, not seconds). The counter only increments on
+# real LLM calls; synthetic LlmResponses returned by ``enforce_first_route``
+# do not count (the LLM was never asked). Reset between scripted runs via
+# ``reset_llm_round_trip_counter``. Stacking order matters — register
+# ``enforce_first_route`` BEFORE ``count_real_llm_calls`` so the latter
+# never fires on a short-circuited turn.
+_real_llm_call_count: int = 0
+
+
+def reset_llm_round_trip_counter() -> None:
+    """Zero the module-level real-LLM-call counter (sequential demo only)."""
+    global _real_llm_call_count
+    _real_llm_call_count = 0
+
+
+def get_llm_round_trip_count() -> int:
+    """Return the count of real LLM calls since the last reset."""
+    return _real_llm_call_count
+
+
+async def count_real_llm_calls(
+    callback_context: Any,
+    llm_request: LlmRequest,
+) -> Optional[LlmResponse]:
+    """``before_model_callback`` that increments the real-LLM-call counter.
+
+    Returns ``None`` so the LLM call proceeds normally. Only registered as
+    a fallback after any short-circuiting callbacks (``enforce_first_route``),
+    so it never increments on a short-circuited turn.
+    """
+    global _real_llm_call_count
+    _real_llm_call_count += 1
+    return None
+
 
 def _active_briefing(ctx: Any) -> Optional[PriorContextBriefing]:
     """Return the directive briefing on the callback context, if any."""

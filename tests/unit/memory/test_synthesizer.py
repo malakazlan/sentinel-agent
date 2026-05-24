@@ -140,10 +140,17 @@ async def test_below_error_count_threshold_does_not_set_first_route(
 
 
 @pytest.mark.asyncio
-async def test_high_error_count_but_low_share_does_not_force_route(
+async def test_count_threshold_fires_even_at_low_share(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """3 of 20 ERROR — count passes but ratio (15%) below threshold (30%)."""
+    """3 of 20 ERROR (15% share) — share is low but raw count clears threshold.
+
+    Per ADR-009 narrative discipline + production reality: in a
+    financial-services context, recent errors are signal not noise.
+    The synthesizer requires only a meaningful raw count (>=3), not a
+    minimum share — share is reported in evidence for transparency but
+    does not gate the directive.
+    """
     traces_payload = [
         _trace_with(_root_span(
             trace_id=f"trace-{i}",
@@ -155,7 +162,8 @@ async def test_high_error_count_but_low_share_does_not_force_route(
     _patch_mcp(monkeypatch, _FakeToolset(traces_payload, []))
 
     b = await self_introspection.synthesize_prior_context()
-    assert b.first_route is None
+    assert b.first_route == "trace_analyzer"
+    assert "3 ERROR" in b.evidence.get("first_route", "")
 
 
 # ── rule: any recent hallucination → must_eval_after ─────────────────────────
