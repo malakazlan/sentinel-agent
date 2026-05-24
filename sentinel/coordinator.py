@@ -23,6 +23,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from sentinel.agents.eval_runner import eval_runner
 from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.constants import COORDINATOR_MODEL
 from sentinel.prompts import load_prompt
@@ -43,12 +44,12 @@ coordinator = LlmAgent(
     instruction=load_prompt("coordinator"),
     description=(
         "Sentinel root agent. In Phase 2, routes between a direct tool call for "
-        "quick lookups and the TraceAnalyzer sub-agent (via A2A) for deep "
-        "statistical analysis. In later phases, adds EvalRunner, RootCause, "
-        "Remediation, and Postmortem sub-agents."
+        "quick lookups, the TraceAnalyzer sub-agent (deep statistical analysis), "
+        "and the EvalRunner sub-agent (quality evaluators). In later phases, "
+        "adds RootCause, Remediation, and Postmortem sub-agents."
     ),
     tools=[get_recent_traces],
-    sub_agents=[trace_analyzer],
+    sub_agents=[trace_analyzer, eval_runner],
     generate_content_config=_GENERATE_CONFIG,
 )
 

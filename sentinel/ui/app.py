@@ -17,7 +17,7 @@ from sentinel.observability.instrumentation import setup_tracing  # noqa: E402
 
 setup_tracing()
 
-st.set_page_config(page_title="Sentinel — Phase 1", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Sentinel — Phase 2", page_icon="🛡️", layout="wide")
 
 # ── session state ──────────────────────────────────────────────────────────
 if "agent_records" not in st.session_state:
@@ -63,7 +63,10 @@ def _render_record(rec: dict) -> None:
 
 # ── main pane ──────────────────────────────────────────────────────────────
 st.title("Sentinel")
-st.caption("Phase 1 — Coordinator with one tool. Ask about recent production activity.")
+st.caption(
+    "Phase 2 — Coordinator with one tool and two sub-agents (TraceAnalyzer, "
+    "EvalRunner). Ask about recent activity, deep stats, or run eval suites."
+)
 
 st.info(f"Phoenix: {phoenix_endpoint} · project `{phoenix_project}`")
 
