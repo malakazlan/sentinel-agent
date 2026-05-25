@@ -28,7 +28,7 @@ from sentinel.observability.instrumentation import setup_tracing  # noqa: E402
 
 setup_tracing()
 
-st.set_page_config(page_title="Sentinel — Phase 3", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Sentinel — Phase 4", page_icon="🛡️", layout="wide")
 
 # ── session state ──────────────────────────────────────────────────────────
 if "agent_records" not in st.session_state:

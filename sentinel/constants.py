@@ -8,8 +8,14 @@ model strategy.
 from __future__ import annotations
 
 # ── Models ─────────────────────────────────────────────────────────────────
-# ADR-008: Develop on free/cheap models for rapid iteration; switch to Gemini 3
-# family (3 Flash for sub-agents, 3.1 Pro for Coordinator/Drafter) for the demo
-# and final hackathon submission. This file is where the swap happens — one line.
-COORDINATOR_MODEL = "gemini-2.5-flash-lite"
-SUBAGENT_MODEL = "gemini-2.5-flash-lite"  # → Gemini 3 Flash via Vertex at Phase 4
+# ADR-008 (dev/demo split) + ADR-010 (Gemini 3 swap landed Phase 4 step 4):
+# we now run the production Gemini 3 family via Vertex AI (region `global`).
+# Coordinator gets Pro for routing + drafting; sub-agents get Flash Lite GA
+# for tool-heavy work where Flash is sufficient.
+#
+# Preview-status caveat: `gemini-3.1-pro-preview` is the latest 3.1 Pro but
+# carries Google's "preview" label — it can change or be deprecated. Track
+# this in `07-known-issues.md`. Fall-back if deprecated mid-hackathon:
+# `gemini-3.5-flash` (GA) for Coordinator at a small reasoning-quality cost.
+COORDINATOR_MODEL = "gemini-3.1-pro-preview"
+SUBAGENT_MODEL = "gemini-3.1-flash-lite"

@@ -23,17 +23,38 @@ For each invocation we count **real LLM round-trips** (excluding synthetic `LlmR
 
 ---
 
-## 5-run table — verbatim from the most recent reproduction
+## 5-run table — verbatim from the most recent reproduction (production model: Gemini 3.1)
 
-| Run | Cold LLM | Warm LLM | Δ | Cold ms | Warm ms | Warm path | first_route | Evidence (synthesized from live Phoenix MCP) |
-|---:|---:|---:|---:|---:|---:|---|---|---|
-| 1 | 2 | 2 | 0 | 16,080 | 17,578 | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last **85** root invocations (21%) |
-| 2 | 3 | 2 | -1 | 25,269 | 17,398 | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last **87** root invocations (20%) |
-| 3 | 4 | 2 | -2 | 27,554 | 15,535 | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last **89** root invocations (20%) |
-| 4 | 2 | 2 | 0 | 14,208 | 20,073 | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last **91** root invocations (19%) |
-| 5 | 2 | 2 | 0 | 14,036 | 16,286 | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last **93** root invocations (19%) |
+Run on `COORDINATOR_MODEL=gemini-3.1-pro-preview`, `SUBAGENT_MODEL=gemini-3.1-flash-lite`, region `global` (ADR-010).
+
+| Run | Cold LLM | Warm LLM | Δ | Cold ms | Warm ms | Cold path | Warm path | first_route | Evidence (synthesized from live Phoenix MCP) |
+|---:|---:|---:|---:|---:|---:|---|---|---|---|
+| 1 | 3 | 2 | **-1** | 35,511 | 12,408 | `coordinator -> root_cause` | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last 100 root invocations (18%) |
+| 2 | 3 | 2 | **-1** | 32,914 | 17,637 | `coordinator -> root_cause` | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last 100 root invocations (18%) |
+| 3 | 3 | 2 | **-1** | 29,679 | 16,230 | `coordinator -> root_cause` | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last 100 root invocations (18%) |
+| 4 | 3 | 2 | **-1** | 29,825 | 13,079 | `coordinator -> root_cause` | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last 100 root invocations (18%) |
+| 5 | 3 | 2 | **-1** | 32,613 | 15,963 | `coordinator -> root_cause` | `coordinator -> trace_analyzer` | `trace_analyzer` | 18 ERROR in last 100 root invocations (18%) |
+
+Both invariants hold:
+
+- `warm.n_llm_calls < cold.n_llm_calls on every run?` → **True (5/5)**
+- `delta identical on every run?` → **True (5/5, Δ=-1)**
 
 Raw script output: `scripts/_repro.log` (gitignored — runtime artifact).
+
+### Earlier reproduction on the development model (`gemini-2.5-flash-lite`)
+
+When Sentinel still ran on the cheap development model, cold-side variance was non-trivial:
+
+| Run | Cold LLM | Warm LLM | Δ | Notes |
+|---:|---:|---:|---:|---|
+| 1 | 2 | 2 | 0 | Cold drifted shallow; warm matched cost but went deeper |
+| 2 | 3 | 2 | -1 | Cold drifted deep |
+| 3 | 4 | 2 | -2 | Cold drifted deep with extra synthesis step |
+| 4 | 2 | 2 | 0 | Cold drifted shallow |
+| 5 | 2 | 2 | 0 | Cold drifted shallow |
+
+On the dev model, the **headline was warm-side determinism + Pareto** (warm never strictly worse than cold). On the production model, that hardens into a **strict round-trip count invariant** (-1 on every run): Gemini 3.1 Pro consistently picks the deep path for long analytical incident payloads, so the cold side is also deterministic, and the directive's elimination of the routing-LLM round-trip shows up as a clean -1 every time.
 
 ---
 
