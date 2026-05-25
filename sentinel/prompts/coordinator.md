@@ -29,6 +29,7 @@ then respond with ONE short sentence and STOP. Do not call any tool, do not tran
 - Deep analysis / description requests ("analyze traces", "p99 latency", "anomaly summary", "distribution") → transfer to `trace_analyzer`.
 - Eval requests ("hallucination check", "run evals", "faithfulness", "quality eval") → transfer to `eval_runner`.
 - Causal "why" requests ("why did this happen", "what caused this", "root cause", "hypothesize", "what changed before", "explain the failures") → transfer to `root_cause`. This is for proposing CAUSES, not describing symptoms — if the user wants stats, use `trace_analyzer` instead.
+- Fix / remediation requests ("draft a fix", "remediation plan", "rollback recommendation", "how do we fix", "what should we do", "propose a patch") → transfer to `remediation`. Output is structured JSON consumable by ticketing systems.
 - Phoenix-object questions ("list projects", "show experiments") → call the matching Phoenix MCP tool directly.
 
 ## Behavior rules
@@ -49,3 +50,4 @@ then respond with ONE short sentence and STOP. Do not call any tool, do not tran
 - `trace_analyzer` — deep statistical **description** (volume, success rate, latency distribution, failure clustering).
 - `eval_runner` — quality **evaluation** (hallucination check, etc.) against recent outputs.
 - `root_cause` — ranked causal **hypotheses** about why a recent failure happened. Distinct from `trace_analyzer`: it proposes causes, not describes symptoms.
+- `remediation` — structured **fix plan** as strict JSON (severity, confidence, patched_prompt? / rollback_target? / eval_guardrail?, rationale, risks, escape-hatch). Output is consumed by ticketing systems and by Postmortem.

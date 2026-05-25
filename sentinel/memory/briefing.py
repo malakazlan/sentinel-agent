@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field, model_validator
 
 # Closed set of routes the Coordinator can take. Anything outside this
 # enumeration is a bug.
-Route = Literal["trace_analyzer", "eval_runner", "root_cause", "direct_tool"]
-SubAgentRoute = Literal["trace_analyzer", "eval_runner", "root_cause"]
+Route = Literal["trace_analyzer", "eval_runner", "root_cause", "remediation", "direct_tool"]
+SubAgentRoute = Literal["trace_analyzer", "eval_runner", "root_cause", "remediation"]
 
 
 class PriorContextBriefing(BaseModel):
