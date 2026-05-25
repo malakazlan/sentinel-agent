@@ -26,6 +26,7 @@ from google.genai import types
 from google.adk.agents.readonly_context import ReadonlyContext
 
 from sentinel.agents.eval_runner import eval_runner
+from sentinel.agents.root_cause import root_cause
 from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.constants import COORDINATOR_MODEL
 from sentinel.memory.briefing import PriorContextBriefing
@@ -150,13 +151,14 @@ coordinator = LlmAgent(
     model=COORDINATOR_MODEL,
     instruction=_coordinator_instruction,
     description=(
-        "Sentinel root agent. In Phase 3, queries Phoenix MCP for prior-context "
-        "before every invocation (self-introspection) and routes to TraceAnalyzer "
-        "or EvalRunner sub-agents based on observed risk signals. In later phases, "
-        "adds RootCause, Remediation, and Postmortem sub-agents."
+        "Sentinel root agent. Self-introspects via Phoenix MCP before every "
+        "invocation and routes to one of three sub-agents (TraceAnalyzer, "
+        "EvalRunner, RootCause) or to a direct tool call, depending on whether "
+        "the user wants statistical description, quality evaluation, causal "
+        "hypotheses, or a quick lookup. Phase 4 adds Remediation and Postmortem."
     ),
     tools=[get_recent_traces, make_phoenix_mcp_toolset()],
-    sub_agents=[trace_analyzer, eval_runner],
+    sub_agents=[trace_analyzer, eval_runner, root_cause],
     generate_content_config=_GENERATE_CONFIG,
     before_agent_callback=before_coordinator_callback,
     # Order matters: enforce_first_route may short-circuit; counter must come
