@@ -34,6 +34,65 @@ from sentinel.memory.briefing import PriorContextBriefing
 
 _FIRST_ROUTE_CONSUMED_KEY = "_first_route_consumed"
 
+# Triggers that unambiguously indicate the user wants a specific sub-agent.
+# When the active directive's ``first_route`` differs from a sub-agent named
+# here by trigger in the latest user message, ``enforce_first_route`` defers
+# instead of short-circuiting: directives set defaults for ambiguous status
+# questions, not hard overrides on explicit specialist requests.
+_EXPLICIT_USER_TRIGGERS: dict[str, tuple[str, ...]] = {
+    "eval_runner": (
+        "hallucination",
+        "halluc",
+        "run eval",
+        "run a eval",
+        "run an eval",
+        "faithful",
+        "quality eval",
+        "check for hallucin",
+    ),
+    "root_cause": (
+        "why did",
+        "why are",
+        "why is",
+        "what caused",
+        "root cause",
+        "hypothesiz",
+        "what changed before",
+        "explain the failure",
+    ),
+    "trace_analyzer": (
+        "latency distribution",
+        "p99",
+        "p95",
+        "anomaly summary",
+        "deep dive",
+        "statistical breakdown",
+        "trace stats",
+    ),
+}
+
+
+def _user_message_text(llm_request: Any) -> str:
+    """Extract the latest user message text from an ``LlmRequest``, lowercased.
+
+    Returns an empty string when no user-role content is found (e.g. system-
+    only request, or unexpected shape). Defensive against attribute drift in
+    ADK across versions.
+    """
+    contents = getattr(llm_request, "contents", None) or []
+    for content in reversed(contents):
+        if getattr(content, "role", None) != "user":
+            continue
+        parts = getattr(content, "parts", None) or []
+        texts: list[str] = []
+        for part in parts:
+            text = getattr(part, "text", None)
+            if text:
+                texts.append(text)
+        if texts:
+            return " ".join(texts).lower()
+    return ""
+
 # Module-level real-LLM-call counter — DEMO INSTRUMENTATION ONLY.
 # The cold-vs-warm panel's headline metric is "round-trip count" per ADR-009
 # narrative discipline (count, not seconds). The counter only increments on
@@ -102,6 +161,22 @@ async def enforce_first_route(
         return None
     if callback_context.state.get(_FIRST_ROUTE_CONSUMED_KEY):
         return None
+
+    # Explicit-user-intent deferral: a directive sets the DEFAULT for
+    # ambiguous status questions. When the user unambiguously names a
+    # different sub-agent's domain ("run a hallucination check",
+    # "hypothesize the cause"), respect that intent and let the LLM route
+    # normally. The directive is a prior, not a hard veto on user agency.
+    user_text = _user_message_text(llm_request)
+    if user_text:
+        for other_route, triggers in _EXPLICIT_USER_TRIGGERS.items():
+            if other_route == briefing.first_route:
+                continue
+            if any(trigger in user_text for trigger in triggers):
+                # Mark consumed so we don't re-evaluate on a later model turn
+                # (e.g. post-tool synthesis); the LLM owns this turn's plan.
+                callback_context.state[_FIRST_ROUTE_CONSUMED_KEY] = True
+                return None
 
     callback_context.state[_FIRST_ROUTE_CONSUMED_KEY] = True
     return LlmResponse(

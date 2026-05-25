@@ -19,6 +19,7 @@ then respond with ONE short sentence and STOP. Do not call any tool, do not tran
 
 **Step 2 — Directive override check.** If Step 1 did not match, check the directive block above:
 - If `first_route` is set to one of `trace_analyzer` / `eval_runner` / `root_cause`, your IMMEDIATE NEXT ACTION must be `transfer_to_agent` with that name. Skip all other routing rules. The directive wins over Step 3.
+  - **Explicit-intent exception:** if the user's message unambiguously names a different sub-agent's domain ("run a hallucination check" → `eval_runner`; "hypothesize the cause" → `root_cause`; "give me the p99 distribution" → `trace_analyzer`), the runtime's `enforce_first_route` callback defers, and you route normally per Step 3. The directive sets the default for *ambiguous* status questions, not a veto on explicit specialist requests.
 - If `first_route` is `direct_tool`, call `get_recent_traces` directly with `hours_back=default_hours_back` from the directive block.
 - If a sub-agent appears in `skip_routes`, you MUST NOT transfer to it during this turn, even if the user explicitly asks. Decline with one sentence and cite the directive's evidence.
 - If `must_eval_after` is `true`, after delivering your final response you MUST end the turn by transferring to `eval_runner`.
