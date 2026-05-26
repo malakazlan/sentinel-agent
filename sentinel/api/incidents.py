@@ -105,7 +105,9 @@ def _run_in_background(state: _IncidentState, scenario: IncidentScenario) -> Non
 
     async def runner() -> None:
         try:
-            state.result = await run_end_to_end_scenario(scenario, on_event=emit)
+            state.result = await run_end_to_end_scenario(
+                scenario, on_event=emit, incident_id=state.incident_id
+            )
         except Exception as exc:  # noqa: BLE001 — surface to the client via the queue
             state.failed_with = f"{type(exc).__name__}: {exc}"
             try:

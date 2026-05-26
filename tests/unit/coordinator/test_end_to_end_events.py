@@ -220,6 +220,45 @@ async def test_callback_failure_fires_incident_failed_then_captured() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_event_uses_explicit_incident_id_when_provided() -> None:
+    """The API layer passes a unique registry id; events must carry it,
+    not scenario.incident_id (the deterministic alert_id)."""
+    events: list[Any] = []
+
+    async def capture(ev: Any) -> None:
+        events.append(ev)
+
+    with (
+        patch("sentinel.coordinator.seed_scenario") as mock_seed,
+        patch("sentinel.coordinator._run_stage") as mock_run_stage,
+        patch("sentinel.coordinator._extract_postmortem_json") as mock_extract,
+        patch("sentinel.coordinator.completeness_score") as mock_completeness,
+    ):
+        from sentinel.tools.incident_sim import SeedSummary
+        from sentinel.coordinator import StageResult
+        mock_seed.return_value = SeedSummary(
+            project="x", spans_written=1, n_ok=1, n_error=0
+        )
+        mock_run_stage.return_value = StageResult(
+            name="stub",
+            prompt="...",
+            records=[{"kind": "final", "author": "coordinator", "text": "..."}],
+            final_text="...",
+            latency_ms=10,
+        )
+        mock_extract.return_value = None
+        mock_completeness.return_value = None
+
+        scenario = get_scenario("fraud-fp-burst")
+        custom_id = "fraud-fp-spike-20260524T204248Z-abcd1234"
+        await run_end_to_end_scenario(scenario, on_event=capture, incident_id=custom_id)
+
+    # EVERY event must carry the explicit incident_id, not scenario.incident_id
+    for ev in events:
+        assert ev.incident_id == custom_id, f"event {type(ev).__name__} has incident_id={ev.incident_id!r}, expected {custom_id!r}"
+
+
+@pytest.mark.asyncio
 async def test_callback_failure_during_stage_fires_incident_failed() -> None:
     """If a stage raises mid-pipeline, the callback receives
     IncidentFailedEvent before the orchestrator returns its error result."""

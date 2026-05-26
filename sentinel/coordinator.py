@@ -49,7 +49,7 @@ from sentinel.agents.remediation import remediation
 from sentinel.agents.root_cause import root_cause
 from sentinel.agents.schemas import Postmortem
 from sentinel.agents.trace_analyzer import trace_analyzer
-from sentinel.api.events import (
+from sentinel.events import (
     IncidentCompletedEvent,
     IncidentFailedEvent,
     IncidentStartedEvent,
@@ -444,6 +444,7 @@ async def run_end_to_end_scenario(
     scenario: "IncidentScenario",
     *,
     on_event: Callable[[Any], Awaitable[None]] | None = None,
+    incident_id: str | None = None,
 ) -> EndToEndResult:
     """Drive a scripted incident through the full 5-agent pipeline.
 
@@ -466,12 +467,19 @@ async def run_end_to_end_scenario(
             boundary. Used by the FastAPI SSE endpoint to stream progress
             live to the frontend. When ``None`` (the default), behavior is
             unchanged — backward compatible with all existing callers.
+        incident_id: Optional override for the ``incident_id`` field on
+            every emitted event. The FastAPI layer mints a unique id per
+            POST (``{alert_id}-{uuid8}``) and threads it here so events
+            match the registry key clients subscribed to. When ``None``,
+            falls back to ``scenario.incident_id`` (the deterministic
+            alert_id) for backward compatibility.
 
     Returns ``EndToEndResult`` carrying every stage's records (for the UI
     accordion), the validated postmortem, the completeness score, and the
     total wall-clock latency.
     """
     overall_start = time.monotonic()
+    emitted_incident_id = incident_id if incident_id is not None else scenario.incident_id
 
     def _elapsed_ms() -> int:
         return int((time.monotonic() - overall_start) * 1000)
@@ -488,7 +496,7 @@ async def run_end_to_end_scenario(
         # the UI can render the stepper skeleton immediately.
         await emit(
             IncidentStartedEvent(
-                incident_id=scenario.incident_id,
+                incident_id=emitted_incident_id,
                 elapsed_ms=_elapsed_ms(),
                 scenario_id=scenario.id,
                 severity=scenario.severity,
@@ -508,7 +516,7 @@ async def run_end_to_end_scenario(
             result.total_latency_ms = _elapsed_ms()
             await emit(
                 IncidentFailedEvent(
-                    incident_id=scenario.incident_id,
+                    incident_id=emitted_incident_id,
                     elapsed_ms=_elapsed_ms(),
                     error=f"{type(exc).__name__}: {exc}",
                 )
@@ -517,7 +525,7 @@ async def run_end_to_end_scenario(
 
         await emit(
             SeedCompletedEvent(
-                incident_id=scenario.incident_id,
+                incident_id=emitted_incident_id,
                 elapsed_ms=_elapsed_ms(),
                 project=result.seed_summary.project,
                 spans_written=result.seed_summary.spans_written,
@@ -539,7 +547,7 @@ async def run_end_to_end_scenario(
             for name, prompt in stages_to_run:
                 await emit(
                     StageStartedEvent(
-                        incident_id=scenario.incident_id,
+                        incident_id=emitted_incident_id,
                         elapsed_ms=_elapsed_ms(),
                         stage=name,  # type: ignore[arg-type]
                         prompt_preview=prompt[:400],
@@ -554,7 +562,7 @@ async def run_end_to_end_scenario(
                     result.total_latency_ms = _elapsed_ms()
                     await emit(
                         IncidentFailedEvent(
-                            incident_id=scenario.incident_id,
+                            incident_id=emitted_incident_id,
                             elapsed_ms=_elapsed_ms(),
                             error=f"{type(exc).__name__}: {exc}",
                         )
@@ -563,7 +571,7 @@ async def run_end_to_end_scenario(
                 result.stages.append(stage)
                 await emit(
                     StageCompletedEvent(
-                        incident_id=scenario.incident_id,
+                        incident_id=emitted_incident_id,
                         elapsed_ms=_elapsed_ms(),
                         stage=name,  # type: ignore[arg-type]
                         latency_ms=stage.latency_ms,
@@ -592,7 +600,7 @@ async def run_end_to_end_scenario(
         if result.postmortem is not None and result.completeness is not None:
             await emit(
                 PostmortemValidatedEvent(
-                    incident_id=scenario.incident_id,
+                    incident_id=emitted_incident_id,
                     elapsed_ms=_elapsed_ms(),
                     completeness_score=float(result.completeness.score),
                     completeness_label=result.completeness.label,
@@ -603,7 +611,7 @@ async def run_end_to_end_scenario(
         result.total_latency_ms = _elapsed_ms()
         await emit(
             IncidentCompletedEvent(
-                incident_id=scenario.incident_id,
+                incident_id=emitted_incident_id,
                 elapsed_ms=_elapsed_ms(),
                 total_latency_ms=result.total_latency_ms,
             )
@@ -614,7 +622,7 @@ async def run_end_to_end_scenario(
         # so callers (and the SSE endpoint) see the propagated exception.
         await emit(
             IncidentFailedEvent(
-                incident_id=scenario.incident_id,
+                incident_id=emitted_incident_id,
                 elapsed_ms=_elapsed_ms(),
                 error=f"{type(exc).__name__}: {exc}",
             )

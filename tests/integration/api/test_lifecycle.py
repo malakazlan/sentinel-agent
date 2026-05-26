@@ -39,39 +39,42 @@ async def test_full_lifecycle_post_stream_get() -> None:
         lessons_learned=["High-confidence scores can be misleading during drift events."],
     )
 
-    async def fake_pipeline(scenario, *, on_event=None):
+    async def fake_pipeline(scenario, *, on_event=None, incident_id=None):
         from sentinel.api.events import (
             IncidentCompletedEvent, IncidentStartedEvent,
             PostmortemValidatedEvent, SeedCompletedEvent,
             StageCompletedEvent, StageStartedEvent,
         )
+        # Mirror the production behavior: use the API-supplied incident_id
+        # when provided, else fall back to the scenario's deterministic id.
+        emitted_id = incident_id if incident_id is not None else scenario.incident_id
         if on_event:
             await on_event(IncidentStartedEvent(
-                incident_id=scenario.incident_id, elapsed_ms=0,
+                incident_id=emitted_id, elapsed_ms=0,
                 scenario_id=scenario.id, severity=scenario.severity,
                 title=scenario.title, watched_project=scenario.watched_project,
             ))
             await on_event(SeedCompletedEvent(
-                incident_id=scenario.incident_id, elapsed_ms=10,
+                incident_id=emitted_id, elapsed_ms=10,
                 project=scenario.watched_project, spans_written=42, n_ok=30, n_error=12,
             ))
             for stage in ("investigate", "root_cause", "remediation", "postmortem"):
                 await on_event(StageStartedEvent(
-                    incident_id=scenario.incident_id, elapsed_ms=20,
+                    incident_id=emitted_id, elapsed_ms=20,
                     stage=stage, prompt_preview="...",
                 ))
                 await on_event(StageCompletedEvent(
-                    incident_id=scenario.incident_id, elapsed_ms=100,
+                    incident_id=emitted_id, elapsed_ms=100,
                     stage=stage, latency_ms=50,
                     authors=["coordinator", stage], final_text=f"{stage} text",
                 ))
             await on_event(PostmortemValidatedEvent(
-                incident_id=scenario.incident_id, elapsed_ms=110,
+                incident_id=emitted_id, elapsed_ms=110,
                 completeness_score=1.0, completeness_label="complete",
                 postmortem_json=pm.model_dump_json(),
             ))
             await on_event(IncidentCompletedEvent(
-                incident_id=scenario.incident_id, elapsed_ms=120, total_latency_ms=120,
+                incident_id=emitted_id, elapsed_ms=120, total_latency_ms=120,
             ))
 
         return EndToEndResult(
@@ -107,6 +110,13 @@ async def test_full_lifecycle_post_stream_get() -> None:
                 "stage_started", "stage_completed",  # postmortem
                 "postmortem_validated", "incident_completed",
             ]
+
+            # All events must carry the registry incident_id (not the deterministic scenario alert_id)
+            for event_payload in events:
+                assert event_payload["incident_id"] == incident_id, (
+                    f"event {event_payload['type']} carried incident_id={event_payload['incident_id']!r}, "
+                    f"expected {incident_id!r}"
+                )
 
             # 3) Wait for the runner task's finally: state.completed.set() to fire.
             # Awaiting the actual signal removes the only non-deterministic point in the test.
