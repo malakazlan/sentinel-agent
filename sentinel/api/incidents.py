@@ -166,7 +166,7 @@ async def get_incident(incident_id: str) -> Any:
                 "scenario_id": state.scenario_id,
             },
         )
-    if state.failed_with:
+    if state.failed_with is not None:
         return JSONResponse(
             status_code=200,
             content={
@@ -175,9 +175,13 @@ async def get_incident(incident_id: str) -> Any:
                 "error": state.failed_with,
             },
         )
-    # state.result is guaranteed non-None here (completed set + no failed_with)
     result = state.result
-    assert result is not None
+    if result is None:
+        # Defensive: should be unreachable when state.completed and not failed_with.
+        raise HTTPException(
+            status_code=500,
+            detail=f"Inconsistent state for incident {incident_id}: completed without result or error",
+        )
     return {
         "incident_id": incident_id,
         "scenario_id": result.scenario_id,

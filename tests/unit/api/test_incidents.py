@@ -157,6 +157,7 @@ async def test_stream_terminates_on_incident_failed_event() -> None:
 
 @pytest.mark.asyncio
 async def test_get_incident_returns_final_result_when_completed() -> None:
+    """Completed run returns 200 with the validated postmortem and metadata."""
     from sentinel.api.incidents import _IncidentState, _REGISTRY
     from sentinel.coordinator import EndToEndResult
     from sentinel.agents.schemas import Postmortem, ActionItem
@@ -204,6 +205,7 @@ async def test_get_incident_returns_final_result_when_completed() -> None:
 
 @pytest.mark.asyncio
 async def test_get_incident_pending_returns_202_with_status() -> None:
+    """In-flight run returns 202 so polling clients can keep checking."""
     from sentinel.api.incidents import _IncidentState, _REGISTRY
     state = _IncidentState(
         incident_id="t-pending",
@@ -250,3 +252,77 @@ async def test_get_incident_failed_returns_succeeded_false_with_error() -> None:
         body = resp.json()
         assert body["succeeded"] is False
         assert "simulated boom" in body["error"]
+
+
+@pytest.mark.asyncio
+async def test_get_incident_includes_seed_summary_and_completeness_when_present() -> None:
+    """The success branch must serialize seed_summary and completeness when
+    they're populated — both branches were untested previously."""
+    from sentinel.api.incidents import _IncidentState, _REGISTRY
+    from sentinel.coordinator import EndToEndResult
+    from sentinel.agents.schemas import Postmortem, ActionItem
+    from sentinel.tools.incident_sim import SeedSummary
+    from evals.completeness import CompletenessResult
+
+    pm = Postmortem(
+        title="Test postmortem for grounded electronics false positives",
+        incident_id="t-full",
+        severity="P1",
+        summary="A spike in false positives occurred for electronics merchant category transactions, blocking legitimate retail purchases.",
+        impact="12 legitimate transactions blocked between 13:16 and 13:21 UTC.",
+        timeline=["13:16 UTC — onset", "13:21 UTC — last false positive observed"],
+        root_cause="Model exhibited over-sensitive thresholding for electronics merchant category transactions above $800.",
+        detection="Discovered via post-hoc verification logs comparing model output to verified labels.",
+        resolution="Investigation in progress; rollback to previous version being evaluated.",
+        action_items=[ActionItem(description="Investigate model sensitivity to electronics", owner_role="fraud-ml-team", severity="P1", due_within_days=7)],
+        lessons_learned=["High-confidence scores are unreliable during drift events."],
+    )
+    state = _IncidentState(
+        incident_id="t-full",
+        scenario_id="fraud-fp-burst",
+        severity="P1",
+        title="test",
+    )
+    state.result = EndToEndResult(
+        scenario_id="fraud-fp-burst",
+        total_latency_ms=12345,
+        stages=[],
+        seed_summary=SeedSummary(
+            project="fraud-detector-prod",
+            spans_written=42,
+            n_ok=30,
+            n_error=12,
+        ),
+        postmortem=pm,
+        completeness=CompletenessResult(
+            score=1.0,
+            n_required=8,
+            n_present_and_nontrivial=8,
+            sections=[],
+        ),
+        error=None,
+    )
+    state.completed.set()
+    _REGISTRY["t-full"] = state
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.get("/incidents/t-full")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Top-level shape
+        assert body["incident_id"] == "t-full"
+        assert body["scenario_id"] == "fraud-fp-burst"
+        assert body["succeeded"] is True
+        assert body["total_latency_ms"] == 12345
+        # seed_summary serialized correctly
+        assert body["seed_summary"] == {
+            "project": "fraud-detector-prod",
+            "spans_written": 42,
+            "n_ok": 30,
+            "n_error": 12,
+        }
+        # completeness serialized correctly
+        assert body["completeness"] == {"score": 1.0, "label": "complete"}
+        # postmortem dumped via model_dump (severity is one easy spot check)
+        assert body["postmortem"]["severity"] == "P1"
