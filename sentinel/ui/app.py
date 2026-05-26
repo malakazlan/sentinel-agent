@@ -14,7 +14,12 @@ load_dotenv()
 
 from evals.incident_metrics import IncidentRun, summarize_run  # noqa: E402
 from evals.time_to_response import annotate_latest_root_span  # noqa: E402
-from sentinel.coordinator import stream_coordinator, stream_coordinator_with_chain  # noqa: E402
+from sentinel.coordinator import (  # noqa: E402
+    EndToEndResult,
+    run_end_to_end_scenario,
+    stream_coordinator,
+    stream_coordinator_with_chain,
+)
 from sentinel.memory.briefing import PriorContextBriefing  # noqa: E402
 from sentinel.memory.enforcement import (  # noqa: E402
     get_llm_round_trip_count,
@@ -25,6 +30,7 @@ from sentinel.memory.self_introspection import (  # noqa: E402
     synthesize_prior_context,
 )
 from sentinel.observability.instrumentation import setup_tracing  # noqa: E402
+from sentinel.scenarios import SCENARIOS  # noqa: E402
 
 setup_tracing()
 
@@ -43,6 +49,8 @@ if "cold_run" not in st.session_state:
     st.session_state.cold_run = None
 if "warm_run" not in st.session_state:
     st.session_state.warm_run = None
+if "e2e_results" not in st.session_state:
+    st.session_state.e2e_results = {}
 
 phoenix_endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
 phoenix_project = os.environ.get("PHOENIX_PROJECT_NAME", "sentinel")
@@ -435,6 +443,118 @@ if cold or warm:
             st.markdown(f"_directive fired:_ `{warm.directive_fired}` · _llm calls:_ `{warm.n_llm_calls}`")
             with st.expander("Warm final response"):
                 st.write(warm.final_text or "_(empty)_")
+
+# ── end-to-end pipeline panel (Phase 4 step 5) ─────────────────────────────
+st.divider()
+st.subheader("🚀 End-to-end pipeline — scripted FinServ scenarios")
+st.caption(
+    "Each scenario drives the full 5-agent pipeline as a chained sequence: "
+    "investigate → root cause → remediation → postmortem. The final postmortem "
+    "is parsed as JSON, Pydantic-validated against the production schema, and "
+    "scored by `evals/completeness.py` against the required-sections list. "
+    "Each scenario is a realistic alerting-webhook payload — not chat."
+)
+
+
+async def _run_e2e(scenario):
+    return await run_end_to_end_scenario(scenario)
+
+
+def _render_postmortem(pm) -> None:
+    """Render a validated Postmortem as readable Markdown."""
+    st.markdown(f"### {pm.title}")
+    st.markdown(
+        f"**Incident ID:** `{pm.incident_id}` · **Severity:** `{pm.severity}`"
+    )
+    st.markdown(f"**Summary.** {pm.summary}")
+    st.markdown(f"**Impact.** {pm.impact}")
+    st.markdown("**Timeline:**")
+    for entry in pm.timeline:
+        st.markdown(f"- {entry}")
+    st.markdown(f"**Root cause.** {pm.root_cause}")
+    st.markdown(f"**Detection.** {pm.detection}")
+    st.markdown(f"**Resolution.** {pm.resolution}")
+    st.markdown("**Action items:**")
+    for item in pm.action_items:
+        st.markdown(
+            f"- _{item.owner_role}_ ({item.severity}, due in "
+            f"{item.due_within_days}d): {item.description}"
+        )
+    st.markdown("**Lessons learned:**")
+    for lesson in pm.lessons_learned:
+        st.markdown(f"- {lesson}")
+
+
+for scenario in SCENARIOS:
+    with st.container(border=True):
+        cols = st.columns([4, 1])
+        with cols[0]:
+            st.markdown(f"**{scenario.title}**  · severity `{scenario.severity}`")
+            st.caption(scenario.short_description)
+        with cols[1]:
+            if st.button(
+                "Run pipeline",
+                key=f"e2e_run_{scenario.id}",
+                type="primary",
+                use_container_width=True,
+            ):
+                with st.spinner(
+                    f"Running 4-stage pipeline for {scenario.title} "
+                    "(~60-120s)..."
+                ):
+                    try:
+                        st.session_state.e2e_results[scenario.id] = asyncio.run(
+                            _run_e2e(scenario)
+                        )
+                    except Exception as exc:
+                        st.error(f"Pipeline crashed at the orchestrator level: {exc}")
+                        st.exception(exc)
+
+# Render results for any scenario that has been run
+for scenario in SCENARIOS:
+    result: EndToEndResult | None = st.session_state.e2e_results.get(scenario.id)
+    if result is None:
+        continue
+
+    st.markdown(f"#### 📋 Result — {scenario.title}")
+
+    mc1, mc2, mc3 = st.columns(3)
+    with mc1:
+        st.metric(
+            "Pipeline",
+            "✓ succeeded" if result.succeeded else "✗ failed",
+        )
+    with mc2:
+        st.metric("Total latency", f"{result.total_latency_ms:,} ms")
+    with mc3:
+        if result.completeness:
+            st.metric(
+                "Postmortem completeness",
+                f"{result.completeness.score:.0%}",
+                delta=result.completeness.label,
+                delta_color="off",
+            )
+        else:
+            st.metric("Postmortem completeness", "—")
+
+    if result.error:
+        st.error(f"**Error:** {result.error}")
+
+    if result.postmortem:
+        with st.expander("📄 Final Postmortem (validated JSON, rendered)", expanded=True):
+            _render_postmortem(result.postmortem)
+
+    with st.expander("🔍 Per-stage records (audit trail)", expanded=False):
+        for stage in result.stages:
+            st.markdown(
+                f"**Stage `{stage.name}`** · {stage.latency_ms:,} ms · "
+                f"authors: {' → '.join(dict.fromkeys(stage.authors)) or '(none)'}"
+            )
+            st.caption(f"prompt: _{stage.prompt[:200]}{'…' if len(stage.prompt) > 200 else ''}_")
+            if stage.final_text:
+                with st.expander(f"Final output ({len(stage.final_text)} chars)"):
+                    st.text(stage.final_text[:4000])
+            st.divider()
 
 # ── sidebar: agent reasoning ───────────────────────────────────────────────
 with st.sidebar:

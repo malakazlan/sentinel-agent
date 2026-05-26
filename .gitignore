@@ -10,6 +10,11 @@ phoenix-server.log
 # Reproduction run artifacts (regeneratable via scripts/repro_cold_vs_warm.py)
 scripts/_repro.log
 
+# Ad-hoc headless verification runners (one-shot scripts; nothing should depend on them)
+_run_*.py
+_run_*.out
+_run_*.stderr
+
 # Development-only docs — never committed, never pushed
 CLAUDE.md
 .claude/
