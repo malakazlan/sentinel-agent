@@ -22,7 +22,15 @@ import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Optional,
+)
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -30,17 +38,26 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 if TYPE_CHECKING:
-    from evals.completeness import CompletenessResult
-    from sentinel.agents.schemas import Postmortem
     from sentinel.scenarios import IncidentScenario
 
 from google.adk.agents.readonly_context import ReadonlyContext
 
+from evals.completeness import CompletenessResult, completeness_score
 from sentinel.agents.eval_runner import eval_runner
 from sentinel.agents.postmortem import postmortem
 from sentinel.agents.remediation import remediation
 from sentinel.agents.root_cause import root_cause
+from sentinel.agents.schemas import Postmortem
 from sentinel.agents.trace_analyzer import trace_analyzer
+from sentinel.api.events import (
+    IncidentCompletedEvent,
+    IncidentFailedEvent,
+    IncidentStartedEvent,
+    PostmortemValidatedEvent,
+    SeedCompletedEvent,
+    StageCompletedEvent,
+    StageStartedEvent,
+)
 from sentinel.constants import COORDINATOR_MODEL
 from sentinel.memory.briefing import PriorContextBriefing
 from sentinel.memory.enforcement import (
@@ -51,6 +68,7 @@ from sentinel.memory.enforcement import (
 from sentinel.memory.self_introspection import before_coordinator_callback
 from sentinel.observability.phoenix_mcp import make_phoenix_mcp_toolset
 from sentinel.prompts import load_prompt
+from sentinel.tools.incident_sim import seed_scenario
 from sentinel.tools.phoenix_traces import get_recent_traces
 
 _BRIEFING_PLACEHOLDER = "{prior_context_briefing}"
@@ -424,6 +442,8 @@ def _extract_postmortem_json(text: str) -> Optional[dict]:
 
 async def run_end_to_end_scenario(
     scenario: "IncidentScenario",
+    *,
+    on_event: Callable[[Any], Awaitable[None]] | None = None,
 ) -> EndToEndResult:
     """Drive a scripted incident through the full 5-agent pipeline.
 
@@ -440,64 +460,166 @@ async def run_end_to_end_scenario(
     directive — if synthesized live mid-pipeline — still triggers an
     eval follow-up correctly.
 
+    Args:
+        scenario: The scripted incident to run.
+        on_event: Optional async callback awaited at every lifecycle
+            boundary. Used by the FastAPI SSE endpoint to stream progress
+            live to the frontend. When ``None`` (the default), behavior is
+            unchanged — backward compatible with all existing callers.
+
     Returns ``EndToEndResult`` carrying every stage's records (for the UI
     accordion), the validated postmortem, the completeness score, and the
     total wall-clock latency.
     """
-    # Lazy imports avoid a circular dependency: schemas live in
-    # sentinel.agents, which transitively imports parts of memory which
-    # imports parts of coordinator on some paths.
-    from evals.completeness import completeness_score
-    from sentinel.agents.schemas import Postmortem
-    from sentinel.tools.incident_sim import seed_scenario
+    overall_start = time.monotonic()
 
-    overall_start = time.perf_counter()
+    def _elapsed_ms() -> int:
+        return int((time.monotonic() - overall_start) * 1000)
+
+    async def emit(event: Any) -> None:
+        """Await the user-supplied callback if one was provided."""
+        if on_event is not None:
+            await on_event(event)
+
     result = EndToEndResult(scenario_id=scenario.id)
 
-    # Step 0 — seed Phoenix with realistic watched-system traces so the
-    # sub-agents have actual data to ground in. Without this, Postmortem
-    # fabricates content (the upstream stages correctly report "no
-    # incident data" but Postmortem fills in plausibility).
     try:
-        result.seed_summary = seed_scenario(scenario.id)
-    except Exception as exc:
-        result.error = f"seeding failed: {type(exc).__name__}: {exc}"
-        result.total_latency_ms = int((time.perf_counter() - overall_start) * 1000)
-        return result
+        # Lifecycle: incident_started — fired before any work begins so
+        # the UI can render the stepper skeleton immediately.
+        await emit(
+            IncidentStartedEvent(
+                incident_id=scenario.incident_id,
+                elapsed_ms=_elapsed_ms(),
+                scenario_id=scenario.id,
+                severity=scenario.severity,
+                title=scenario.title,
+                watched_project=scenario.watched_project,
+            )
+        )
 
-    stages_to_run: list[tuple[str, str]] = [
-        ("investigate", scenario.initial_prompt()),
-        *_PIPELINE_FOLLOWUP_STAGES,
-        ("postmortem", _make_postmortem_prompt(scenario)),
-    ]
-
-    # Point sub-agent tool calls at the watched project for the duration
-    # of the pipeline. Self-introspection (via the synthesizer's hardcoded
-    # 'sentinel' project) is unaffected.
-    with _watched_project_env(scenario.watched_project):
-        for name, prompt in stages_to_run:
-            try:
-                stage = await _run_stage(name, prompt)
-            except Exception as exc:
-                result.error = f"stage {name!r} failed: {type(exc).__name__}: {exc}"
-                result.total_latency_ms = int((time.perf_counter() - overall_start) * 1000)
-                return result
-            result.stages.append(stage)
-
-    # Extract + validate the postmortem from the final stage's output.
-    pm_stage = result.stages[-1]
-    pm_dict = _extract_postmortem_json(pm_stage.final_text)
-    if pm_dict is None:
-        result.error = "postmortem stage produced no parseable JSON block"
-    else:
+        # Step 0 — seed Phoenix with realistic watched-system traces so the
+        # sub-agents have actual data to ground in. Without this, Postmortem
+        # fabricates content (the upstream stages correctly report "no
+        # incident data" but Postmortem fills in plausibility).
         try:
-            result.postmortem = Postmortem(**pm_dict)
-            result.completeness = completeness_score(result.postmortem)
+            result.seed_summary = seed_scenario(scenario.id)
         except Exception as exc:
-            result.error = f"postmortem JSON failed schema validation: {type(exc).__name__}: {exc}"
+            result.error = f"seeding failed: {type(exc).__name__}: {exc}"
+            result.total_latency_ms = _elapsed_ms()
+            await emit(
+                IncidentFailedEvent(
+                    incident_id=scenario.incident_id,
+                    elapsed_ms=_elapsed_ms(),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            return result
 
-    result.total_latency_ms = int((time.perf_counter() - overall_start) * 1000)
-    return result
+        await emit(
+            SeedCompletedEvent(
+                incident_id=scenario.incident_id,
+                elapsed_ms=_elapsed_ms(),
+                project=result.seed_summary.project,
+                spans_written=result.seed_summary.spans_written,
+                n_ok=result.seed_summary.n_ok,
+                n_error=result.seed_summary.n_error,
+            )
+        )
+
+        stages_to_run: list[tuple[str, str]] = [
+            ("investigate", scenario.initial_prompt()),
+            *_PIPELINE_FOLLOWUP_STAGES,
+            ("postmortem", _make_postmortem_prompt(scenario)),
+        ]
+
+        # Point sub-agent tool calls at the watched project for the duration
+        # of the pipeline. Self-introspection (via the synthesizer's hardcoded
+        # 'sentinel' project) is unaffected.
+        with _watched_project_env(scenario.watched_project):
+            for name, prompt in stages_to_run:
+                await emit(
+                    StageStartedEvent(
+                        incident_id=scenario.incident_id,
+                        elapsed_ms=_elapsed_ms(),
+                        stage=name,  # type: ignore[arg-type]
+                        prompt_preview=prompt[:400],
+                    )
+                )
+                try:
+                    stage = await _run_stage(name, prompt)
+                except Exception as exc:
+                    result.error = (
+                        f"stage {name!r} failed: {type(exc).__name__}: {exc}"
+                    )
+                    result.total_latency_ms = _elapsed_ms()
+                    await emit(
+                        IncidentFailedEvent(
+                            incident_id=scenario.incident_id,
+                            elapsed_ms=_elapsed_ms(),
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+                    )
+                    return result
+                result.stages.append(stage)
+                await emit(
+                    StageCompletedEvent(
+                        incident_id=scenario.incident_id,
+                        elapsed_ms=_elapsed_ms(),
+                        stage=name,  # type: ignore[arg-type]
+                        latency_ms=stage.latency_ms,
+                        authors=stage.authors,
+                        final_text=stage.final_text,
+                    )
+                )
+
+        # Extract + validate the postmortem from the final stage's output.
+        pm_stage = result.stages[-1]
+        pm_dict = _extract_postmortem_json(pm_stage.final_text)
+        if pm_dict is None:
+            result.error = "postmortem stage produced no parseable JSON block"
+        else:
+            try:
+                result.postmortem = Postmortem(**pm_dict)
+                result.completeness = completeness_score(result.postmortem)
+            except Exception as exc:
+                result.error = (
+                    f"postmortem JSON failed schema validation: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+        # Lifecycle: postmortem_validated — only when extraction + Pydantic
+        # validation + completeness scoring all succeeded.
+        if result.postmortem is not None and result.completeness is not None:
+            await emit(
+                PostmortemValidatedEvent(
+                    incident_id=scenario.incident_id,
+                    elapsed_ms=_elapsed_ms(),
+                    completeness_score=float(result.completeness.score),
+                    completeness_label=result.completeness.label,
+                    postmortem_json=result.postmortem.model_dump_json(),
+                )
+            )
+
+        result.total_latency_ms = _elapsed_ms()
+        await emit(
+            IncidentCompletedEvent(
+                incident_id=scenario.incident_id,
+                elapsed_ms=_elapsed_ms(),
+                total_latency_ms=result.total_latency_ms,
+            )
+        )
+        return result
+    except Exception as exc:
+        # Any other unexpected error — emit incident_failed and re-raise
+        # so callers (and the SSE endpoint) see the propagated exception.
+        await emit(
+            IncidentFailedEvent(
+                incident_id=scenario.incident_id,
+                elapsed_ms=_elapsed_ms(),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        )
+        raise
 
 
 def _summarize_event(event: Any) -> list[dict]:
