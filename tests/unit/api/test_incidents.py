@@ -153,3 +153,100 @@ async def test_stream_terminates_on_incident_failed_event() -> None:
     import json
     types = [json.loads(c)["type"] for c in chunks]
     assert types[-1] == "incident_failed"
+
+
+@pytest.mark.asyncio
+async def test_get_incident_returns_final_result_when_completed() -> None:
+    from sentinel.api.incidents import _IncidentState, _REGISTRY
+    from sentinel.coordinator import EndToEndResult
+    from sentinel.agents.schemas import Postmortem, ActionItem
+
+    pm = Postmortem(
+        title="Test postmortem for grounded electronics false positives",
+        incident_id="t-completed",
+        severity="P1",
+        summary="A spike in false positives occurred for electronics merchant category transactions, blocking legitimate retail purchases.",
+        impact="12 legitimate transactions blocked between 13:16 and 13:21 UTC.",
+        timeline=["13:16 UTC — onset", "13:21 UTC — last false positive observed"],
+        root_cause="Model exhibited over-sensitive thresholding for electronics merchant category transactions above $800.",
+        detection="Discovered via post-hoc verification logs comparing model output to verified labels.",
+        resolution="Investigation in progress; rollback to previous version being evaluated.",
+        action_items=[ActionItem(description="Investigate model sensitivity to electronics", owner_role="fraud-ml-team", severity="P1", due_within_days=7)],
+        lessons_learned=["High-confidence scores are unreliable during drift events."],
+    )
+    state = _IncidentState(
+        incident_id="t-completed",
+        scenario_id="fraud-fp-burst",
+        severity="P1",
+        title="test",
+    )
+    state.result = EndToEndResult(
+        scenario_id="fraud-fp-burst",
+        total_latency_ms=12345,
+        stages=[],
+        seed_summary=None,
+        postmortem=pm,
+        completeness=None,
+        error=None,
+    )
+    state.completed.set()
+    _REGISTRY["t-completed"] = state
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.get("/incidents/t-completed")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["succeeded"] is True
+        assert body["total_latency_ms"] == 12345
+        assert body["postmortem"]["severity"] == "P1"
+
+
+@pytest.mark.asyncio
+async def test_get_incident_pending_returns_202_with_status() -> None:
+    from sentinel.api.incidents import _IncidentState, _REGISTRY
+    state = _IncidentState(
+        incident_id="t-pending",
+        scenario_id="fraud-fp-burst",
+        severity="P1",
+        title="test",
+    )
+    _REGISTRY["t-pending"] = state  # completed not set, result is None
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.get("/incidents/t-pending")
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_get_incident_unknown_returns_404() -> None:
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.get("/incidents/does-not-exist")
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_incident_failed_returns_succeeded_false_with_error() -> None:
+    """If the runner caught an exception, the GET should return succeeded=False
+    plus the error message, with status 200 (the request is fine; the pipeline failed)."""
+    from sentinel.api.incidents import _IncidentState, _REGISTRY
+    state = _IncidentState(
+        incident_id="t-failed-get",
+        scenario_id="fraud-fp-burst",
+        severity="P1",
+        title="test",
+    )
+    state.failed_with = "RuntimeError: simulated boom"
+    state.completed.set()
+    _REGISTRY["t-failed-get"] = state
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.get("/incidents/t-failed-get")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["succeeded"] is False
+        assert "simulated boom" in body["error"]

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -142,3 +143,58 @@ async def stream_incident(incident_id: str) -> EventSourceResponse:
                 return
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/{incident_id}")
+async def get_incident(incident_id: str) -> Any:
+    """Return the final validated result for an incident.
+
+    Status codes:
+    - 200 with the full result (succeeded or failed) when the pipeline finished
+    - 202 with ``{status: "running"}`` when the pipeline is still in flight
+    - 404 when the incident isn't in the registry
+    """
+    state = _REGISTRY.get(incident_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Unknown incident: {incident_id}")
+    if not state.completed.is_set():
+        return JSONResponse(
+            status_code=202,
+            content={
+                "incident_id": incident_id,
+                "status": "running",
+                "scenario_id": state.scenario_id,
+            },
+        )
+    if state.failed_with:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "incident_id": incident_id,
+                "succeeded": False,
+                "error": state.failed_with,
+            },
+        )
+    # state.result is guaranteed non-None here (completed set + no failed_with)
+    result = state.result
+    assert result is not None
+    return {
+        "incident_id": incident_id,
+        "scenario_id": result.scenario_id,
+        "succeeded": result.succeeded,
+        "total_latency_ms": result.total_latency_ms,
+        "postmortem": result.postmortem.model_dump() if result.postmortem else None,
+        "completeness": (
+            {"score": result.completeness.score, "label": result.completeness.label}
+            if result.completeness else None
+        ),
+        "seed_summary": (
+            {
+                "project": result.seed_summary.project,
+                "spans_written": result.seed_summary.spans_written,
+                "n_ok": result.seed_summary.n_ok,
+                "n_error": result.seed_summary.n_error,
+            }
+            if result.seed_summary else None
+        ),
+    }
