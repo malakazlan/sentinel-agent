@@ -108,13 +108,17 @@ async def test_full_lifecycle_post_stream_get() -> None:
                 "postmortem_validated", "incident_completed",
             ]
 
-            # 3) Give the background task a moment to set state.completed
-            await asyncio.sleep(0.05)
+            # 3) Wait for the runner task's finally: state.completed.set() to fire.
+            # Awaiting the actual signal removes the only non-deterministic point in the test.
+            from sentinel.api.incidents import _REGISTRY
+            await asyncio.wait_for(_REGISTRY[incident_id].completed.wait(), timeout=2.0)
 
             # 4) GET returns the validated postmortem
             get_resp = await client.get(f"/incidents/{incident_id}")
             assert get_resp.status_code == 200
             body = get_resp.json()
             assert body["succeeded"] is True
+            assert body["total_latency_ms"] == 120
+            assert body["scenario_id"] == "fraud-fp-burst"
             assert body["postmortem"]["severity"] == "P1"
             assert "electronics" in body["postmortem"]["root_cause"]
