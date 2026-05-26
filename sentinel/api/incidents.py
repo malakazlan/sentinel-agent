@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -135,12 +136,31 @@ async def stream_incident(incident_id: str) -> EventSourceResponse:
     if state is None:
         raise HTTPException(status_code=404, detail=f"Unknown incident: {incident_id}")
 
-    async def event_generator():
-        while True:
-            event = await state.queue.get()
-            yield {"data": event.model_dump_json()}
-            if isinstance(event, (IncidentCompletedEvent, IncidentFailedEvent)):
-                return
+    async def event_generator() -> AsyncIterator[dict[str, str]]:
+        completed_task = asyncio.create_task(state.completed.wait())
+        try:
+            while True:
+                getter = asyncio.create_task(state.queue.get())
+                done, _ = await asyncio.wait(
+                    {getter, completed_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if getter in done:
+                    event = getter.result()
+                    yield {"data": event.model_dump_json()}
+                    if isinstance(event, (IncidentCompletedEvent, IncidentFailedEvent)):
+                        return
+                else:
+                    # Runner finished without a terminal event. Drain any
+                    # buffered events, then exit.
+                    getter.cancel()
+                    while not state.queue.empty():
+                        event = state.queue.get_nowait()
+                        yield {"data": event.model_dump_json()}
+                    return
+        finally:
+            if not completed_task.done():
+                completed_task.cancel()
 
     return EventSourceResponse(event_generator())
 

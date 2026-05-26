@@ -326,3 +326,41 @@ async def test_get_incident_includes_seed_summary_and_completeness_when_present(
         assert body["completeness"] == {"score": 1.0, "label": "complete"}
         # postmortem dumped via model_dump (severity is one easy spot check)
         assert body["postmortem"]["severity"] == "P1"
+
+
+@pytest.mark.asyncio
+async def test_stream_terminates_when_runner_finishes_without_terminal_event() -> None:
+    """If the runner sets state.completed without putting a terminal event,
+    the SSE generator must still close gracefully (defense against future
+    regressions in _run_in_background)."""
+    from sentinel.api.events import IncidentStartedEvent
+    from sentinel.api.incidents import _IncidentState, _REGISTRY
+
+    state = _IncidentState(
+        incident_id="t-bare",
+        scenario_id="fraud-fp-burst",
+        severity="P1",
+        title="test",
+    )
+    _REGISTRY["t-bare"] = state
+
+    # Only emit one non-terminal event, then mark completed.
+    await state.queue.put(IncidentStartedEvent(
+        incident_id="t-bare", elapsed_ms=0,
+        scenario_id="fraud-fp-burst", severity="P1",
+        title="test", watched_project="x",
+    ))
+    state.completed.set()
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        async with client.stream("GET", "/incidents/t-bare/stream") as resp:
+            assert resp.status_code == 200
+            chunks = []
+            async for line in resp.aiter_lines():
+                if line.startswith("data:"):
+                    chunks.append(line[len("data:"):].strip())
+    # The single buffered event must reach the client; then the stream closes cleanly.
+    import json
+    assert len(chunks) == 1
+    assert json.loads(chunks[0])["type"] == "incident_started"
