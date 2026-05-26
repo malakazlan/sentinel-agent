@@ -22,7 +22,7 @@ then respond with ONE short sentence and STOP. Do not call any tool, do not tran
   - **Explicit-intent exception:** if the user's message unambiguously names a different sub-agent's domain ("run a hallucination check" → `eval_runner`; "hypothesize the cause" → `root_cause`; "give me the p99 distribution" → `trace_analyzer`), the runtime's `enforce_first_route` callback defers, and you route normally per Step 3. The directive sets the default for *ambiguous* status questions, not a veto on explicit specialist requests.
 - If `first_route` is `direct_tool`, call `get_recent_traces` directly with `hours_back=default_hours_back` from the directive block.
 - If a sub-agent appears in `skip_routes`, you MUST NOT transfer to it during this turn, even if the user explicitly asks. Decline with one sentence and cite the directive's evidence.
-- If `must_eval_after` is `true`, after delivering your final response you MUST end the turn by transferring to `eval_runner`.
+- `must_eval_after` is handled by the runtime, NOT by you. If the briefing has `must_eval_after=true`, the wrapper (`stream_coordinator_with_chain`) automatically invokes `eval_runner` as a follow-up turn after your primary response. You only handle ONE transfer per turn — do not also attempt an `eval_runner` transfer on top of the user's actual request.
 
 **Step 3 — Default routing.** Only reached if `first_route` is not set:
 - Quick status questions ("what's going on?", "any incidents?", "how are things?") → call `get_recent_traces` directly.

@@ -224,6 +224,88 @@ async def run_coordinator(user_text: str) -> str:
     return final_text
 
 
+_MUST_EVAL_FOLLOWUP_PROMPT = (
+    "Now run a hallucination check on the recent traces and summarize the findings. "
+    "This is an automated safety follow-up triggered by the prior-context briefing's "
+    "`must_eval_after` directive."
+)
+
+
+async def stream_coordinator_with_chain(
+    user_text: str,
+) -> AsyncIterator[dict]:
+    """Stream the Coordinator and chain a follow-up eval if directive requires it.
+
+    Wraps ``stream_coordinator`` to enforce the ``must_eval_after`` directive
+    at runtime instead of via prompt. The Coordinator's prompt no longer
+    contains the "MUST transfer to eval_runner at end of turn" clause — that
+    triggered multi-transfer-in-one-turn collisions (P2). Here we run the
+    primary turn cleanly, then chain a SECOND Coordinator invocation with
+    an explicit eval-request prompt that routes to ``eval_runner`` via the
+    normal explicit-intent path.
+
+    Behavior:
+
+    - If a ``briefing_override`` is active (demo / test path), uses that
+      briefing for both turns to keep the demo deterministic.
+    - Else, calls ``synthesize_prior_context`` once and pins it across
+      both turns so the follow-up sees the same evidence.
+    - Only chains the follow-up when ``briefing.must_eval_after`` is true
+      AND ``eval_runner`` did not already author any records in the
+      primary turn (no double-eval).
+    - Yields all records from both turns in order, fully transparent to
+      the UI.
+
+    Args:
+        user_text: Raw input from the UI.
+
+    Yields:
+        Event records, primary turn first, then optional follow-up turn.
+    """
+    from sentinel.memory import self_introspection
+    from sentinel.memory.self_introspection import (
+        briefing_override,
+        synthesize_prior_context,
+    )
+
+    # Resolve the briefing once. If an override is already active (demo /
+    # test path), respect it; otherwise synthesize from live Phoenix MCP.
+    active_briefing = self_introspection._briefing_override
+    pinned_externally = active_briefing is not None
+    if active_briefing is None:
+        active_briefing = await synthesize_prior_context()
+
+    eval_runner_ran = False
+
+    if pinned_externally:
+        # Caller already controls the override — don't double-wrap.
+        async for record in stream_coordinator(user_text):
+            if record.get("author") == "eval_runner":
+                eval_runner_ran = True
+            yield record
+    else:
+        # Pin the synthesized briefing so the follow-up sees the same one.
+        with briefing_override(active_briefing):
+            async for record in stream_coordinator(user_text):
+                if record.get("author") == "eval_runner":
+                    eval_runner_ran = True
+                yield record
+
+    if not active_briefing.must_eval_after or eval_runner_ran:
+        return
+
+    # Chain a follow-up eval pass. Same briefing context, explicit user
+    # intent in the follow-up message routes deterministically to
+    # eval_runner via the explicit-intent triggers in enforce_first_route.
+    if pinned_externally:
+        async for record in stream_coordinator(_MUST_EVAL_FOLLOWUP_PROMPT):
+            yield record
+    else:
+        with briefing_override(active_briefing):
+            async for record in stream_coordinator(_MUST_EVAL_FOLLOWUP_PROMPT):
+                yield record
+
+
 def _summarize_event(event: Any) -> list[dict]:
     """Convert one ADK ``Event`` into zero or more UI-facing records.
 

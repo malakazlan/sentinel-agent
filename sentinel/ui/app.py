@@ -14,7 +14,7 @@ load_dotenv()
 
 from evals.incident_metrics import IncidentRun, summarize_run  # noqa: E402
 from evals.time_to_response import annotate_latest_root_span  # noqa: E402
-from sentinel.coordinator import stream_coordinator  # noqa: E402
+from sentinel.coordinator import stream_coordinator, stream_coordinator_with_chain  # noqa: E402
 from sentinel.memory.briefing import PriorContextBriefing  # noqa: E402
 from sentinel.memory.enforcement import (  # noqa: E402
     get_llm_round_trip_count,
@@ -50,10 +50,15 @@ phoenix_project = os.environ.get("PHOENIX_PROJECT_NAME", "sentinel")
 
 # ── stream consumer ────────────────────────────────────────────────────────
 async def _consume(user_text: str) -> tuple[list[dict], str]:
-    """Drain the Coordinator's event stream into a (records, final_text) pair."""
+    """Drain the chained Coordinator stream into a (records, final_text) pair.
+
+    Uses ``stream_coordinator_with_chain`` so a ``must_eval_after`` directive
+    is honored deterministically at runtime (P2 resolved) without the
+    multi-transfer collision the prompt-side approach caused.
+    """
     records: list[dict] = []
     final_text = ""
-    async for rec in stream_coordinator(user_text):
+    async for rec in stream_coordinator_with_chain(user_text):
         records.append(rec)
         if rec["kind"] == "final":
             final_text += rec["text"]
