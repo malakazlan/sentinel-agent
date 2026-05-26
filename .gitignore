@@ -19,3 +19,4 @@ _run_*.stderr
 CLAUDE.md
 .claude/
 context/
+docs/superpowers/
