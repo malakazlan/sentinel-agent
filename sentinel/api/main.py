@@ -13,6 +13,7 @@ from sentinel.api.incidents import router as incidents_router
 
 
 def create_app() -> FastAPI:
+    """Build the FastAPI app with CORS, the incidents router, and a health endpoint."""
     app = FastAPI(
         title="Sentinel API",
         version="0.1.0",
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, str]:
+        """Simple liveness probe — returns `{'status': 'ok'}`."""
         return {"status": "ok"}
 
     return app

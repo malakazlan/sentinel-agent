@@ -40,3 +40,16 @@ async def test_post_incident_validates_request_body() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
         resp = await client.post("/incidents", json={})  # missing scenario_id
         assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_incident_twice_yields_distinct_incident_ids() -> None:
+    """Two posts to the same scenario must not clobber each other in the registry."""
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        with patch("sentinel.api.incidents._run_in_background"):
+            r1 = await client.post("/incidents", json={"scenario_id": "fraud-fp-burst"})
+            r2 = await client.post("/incidents", json={"scenario_id": "fraud-fp-burst"})
+            assert r1.status_code == 201
+            assert r2.status_code == 201
+            assert r1.json()["incident_id"] != r2.json()["incident_id"]

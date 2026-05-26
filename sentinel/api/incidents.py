@@ -15,8 +15,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from sentinel.api.events import IncidentFailedEvent
 from sentinel.coordinator import EndToEndResult, run_end_to_end_scenario
-from sentinel.scenarios import get_scenario
+from sentinel.scenarios import IncidentScenario, get_scenario
 
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -32,16 +33,21 @@ class _IncidentState:
     result: EndToEndResult | None = None
     failed_with: str | None = None
     completed: asyncio.Event = field(default_factory=asyncio.Event)
+    task: asyncio.Task[None] | None = None
 
 
 _REGISTRY: dict[str, _IncidentState] = {}
 
 
 class CreateIncidentRequest(BaseModel):
+    """Request body for POST /incidents — identifies which scenario to run."""
+
     scenario_id: str = Field(..., min_length=3, max_length=80)
 
 
 class CreateIncidentResponse(BaseModel):
+    """Response body confirming an incident was accepted and scheduled."""
+
     incident_id: str
     scenario_id: str
     severity: str
@@ -51,15 +57,15 @@ class CreateIncidentResponse(BaseModel):
 
 @router.post("", status_code=201, response_model=CreateIncidentResponse)
 async def create_incident(req: CreateIncidentRequest) -> CreateIncidentResponse:
+    """Start a new incident pipeline run for the given scenario."""
+    started_at = datetime.now(timezone.utc)
     try:
         scenario = get_scenario(req.scenario_id)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail=f"Unknown scenario: {req.scenario_id}") from exc
 
-    incident_id = (
-        scenario.alert_payload.get("alert_id")
-        or f"{scenario.id}-{uuid.uuid4().hex[:12]}"
-    )
+    base = scenario.alert_payload.get("alert_id") or scenario.id
+    incident_id = f"{base}-{uuid.uuid4().hex[:8]}"
     state = _IncidentState(
         incident_id=incident_id,
         scenario_id=scenario.id,
@@ -75,11 +81,11 @@ async def create_incident(req: CreateIncidentRequest) -> CreateIncidentResponse:
         scenario_id=scenario.id,
         severity=scenario.severity,
         title=scenario.title,
-        started_at=datetime.now(timezone.utc),
+        started_at=started_at,
     )
 
 
-def _run_in_background(state: _IncidentState, scenario: Any) -> None:
+def _run_in_background(state: _IncidentState, scenario: IncidentScenario) -> None:
     """Spawn the pipeline as an asyncio task; events fan out to the state queue.
 
     The callback wraps queue.put in a no-raise guard so that a queue
@@ -98,7 +104,6 @@ def _run_in_background(state: _IncidentState, scenario: Any) -> None:
         try:
             state.result = await run_end_to_end_scenario(scenario, on_event=emit)
         except Exception as exc:  # noqa: BLE001 — surface to the client via the queue
-            from sentinel.api.events import IncidentFailedEvent
             state.failed_with = f"{type(exc).__name__}: {exc}"
             try:
                 await state.queue.put(
@@ -113,4 +118,4 @@ def _run_in_background(state: _IncidentState, scenario: Any) -> None:
         finally:
             state.completed.set()
 
-    asyncio.create_task(runner())
+    state.task = asyncio.create_task(runner())
