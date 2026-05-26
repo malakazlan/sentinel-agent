@@ -10,7 +10,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from sentinel.agents.schemas import EvalGuardrail, RemediationPlan
+from sentinel.agents.schemas import (
+    ActionItem,
+    EvalGuardrail,
+    POSTMORTEM_REQUIRED_SECTIONS,
+    Postmortem,
+    RemediationPlan,
+)
 
 
 # ── EvalGuardrail ──────────────────────────────────────────────────────────
@@ -173,3 +179,130 @@ def test_rationale_too_short_rejected() -> None:
             rationale="short",
             rollback_plan_if_remediation_fails="x" * 30,
         )
+
+
+# ── ActionItem ─────────────────────────────────────────────────────────────
+
+
+def _valid_action_item(**overrides) -> ActionItem:
+    base = dict(
+        description="Add a synthetic FP-rate canary that pages within 5 min of breach.",
+        owner_role="fraud-ml-team",
+        severity="P2",
+        due_within_days=14,
+    )
+    base.update(overrides)
+    return ActionItem(**base)
+
+
+def test_action_item_minimal_valid() -> None:
+    item = _valid_action_item()
+    assert item.owner_role == "fraud-ml-team"
+
+
+def test_action_item_rejects_short_description() -> None:
+    with pytest.raises(ValidationError):
+        _valid_action_item(description="too short")
+
+
+def test_action_item_rejects_due_zero_days() -> None:
+    with pytest.raises(ValidationError):
+        _valid_action_item(due_within_days=0)
+
+
+def test_action_item_rejects_due_over_90_days() -> None:
+    with pytest.raises(ValidationError):
+        _valid_action_item(due_within_days=120)
+
+
+# ── Postmortem ─────────────────────────────────────────────────────────────
+
+
+def _valid_postmortem(**overrides) -> Postmortem:
+    """Build a baseline valid Postmortem for tests; overrides exercise specific fields."""
+    base = dict(
+        title="Fraud-detection false-positive burst 2026-05-24",
+        incident_id="fraud-fp-spike-20260524T204248Z",
+        severity="P1",
+        summary=(
+            "Fraud classifier hit 3x baseline FP rate for ~90s at 20:42 UTC, blocking "
+            "1247 legitimate transactions before rollback restored prior behavior."
+        ),
+        impact=(
+            "1247 transactions blocked, 312 customer accounts frozen, ~$84k revenue at risk. "
+            "No regulatory disclosure threshold breached."
+        ),
+        timeline=[
+            "20:42 UTC — FP rate alert fires (3x baseline within 90s window).",
+            "20:43 UTC — On-call paged; incident channel opened.",
+            "20:48 UTC — Rollback to fraud-classifier-v2.2.7 initiated.",
+            "20:51 UTC — FP rate returned to baseline; incident resolved.",
+        ],
+        root_cause=(
+            "Prompt revision in fraud-classifier-v2.3.1 (deployed 20:24 UTC) introduced an "
+            "overly broad pattern match that flagged routine merchant categories as fraud."
+        ),
+        detection="FP-rate canary tripped at +90s after threshold breach. Mean-time-to-detect ~2 min.",
+        resolution=(
+            "Rollback to v2.2.7 + added an eval guardrail (fp_rate_spike_5m) that would "
+            "have detected this regression in pre-prod."
+        ),
+        action_items=[
+            _valid_action_item().model_dump(),
+        ],
+        lessons_learned=[
+            "Prompt-only changes to scoring models require the same pre-prod canary as model swaps."
+        ],
+    )
+    base.update(overrides)
+    return Postmortem(**base)
+
+
+def test_postmortem_full_valid_construction() -> None:
+    pm = _valid_postmortem()
+    assert pm.severity == "P1"
+    assert len(pm.timeline) == 4
+    assert len(pm.action_items) == 1
+    assert pm.action_items[0].owner_role == "fraud-ml-team"
+
+
+def test_postmortem_rejects_too_few_timeline_entries() -> None:
+    with pytest.raises(ValidationError):
+        _valid_postmortem(timeline=["20:42 UTC — single entry, not enough"])
+
+
+def test_postmortem_rejects_empty_timeline_entry() -> None:
+    with pytest.raises(ValidationError) as exc:
+        _valid_postmortem(timeline=["20:42 UTC — fine", "   "])
+    assert "timeline contains empty entries" in str(exc.value)
+
+
+def test_postmortem_rejects_zero_action_items() -> None:
+    with pytest.raises(ValidationError):
+        _valid_postmortem(action_items=[])
+
+
+def test_postmortem_rejects_zero_lessons() -> None:
+    with pytest.raises(ValidationError):
+        _valid_postmortem(lessons_learned=[])
+
+
+def test_postmortem_rejects_empty_lesson() -> None:
+    with pytest.raises(ValidationError) as exc:
+        _valid_postmortem(lessons_learned=["valid lesson", "  "])
+    assert "lessons_learned contains empty entries" in str(exc.value)
+
+
+def test_postmortem_rejects_stub_summary() -> None:
+    with pytest.raises(ValidationError):
+        _valid_postmortem(summary="too short")
+
+
+def test_postmortem_required_sections_match_model_fields() -> None:
+    """POSTMORTEM_REQUIRED_SECTIONS must equal Postmortem's declared fields."""
+    model_fields = set(Postmortem.model_fields.keys())
+    declared = set(POSTMORTEM_REQUIRED_SECTIONS)
+    assert model_fields == declared, (
+        f"drift between Postmortem model_fields {model_fields} and "
+        f"POSTMORTEM_REQUIRED_SECTIONS {declared} — sync the tuple"
+    )

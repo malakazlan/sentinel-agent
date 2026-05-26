@@ -80,6 +80,18 @@ _EXPLICIT_USER_TRIGGERS: dict[str, tuple[str, ...]] = {
         "what should we do",
         "propose a patch",
     ),
+    "postmortem": (
+        "postmortem",
+        "post mortem",
+        "post-mortem",
+        "write the postmortem",
+        "incident report",
+        "rca document",
+        "root cause analysis document",
+        "summarize the incident",
+        "write up the incident",
+        "incident write-up",
+    ),
 }
 
 
@@ -168,7 +180,13 @@ async def enforce_first_route(
     briefing = _active_briefing(callback_context)
     if briefing is None:
         return None
-    if briefing.first_route not in ("trace_analyzer", "eval_runner", "root_cause", "remediation"):
+    if briefing.first_route not in (
+        "trace_analyzer",
+        "eval_runner",
+        "root_cause",
+        "remediation",
+        "postmortem",
+    ):
         return None
     if callback_context.state.get(_FIRST_ROUTE_CONSUMED_KEY):
         return None
