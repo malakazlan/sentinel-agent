@@ -14,8 +14,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
-from sentinel.api.events import IncidentFailedEvent
+from sentinel.api.events import IncidentCompletedEvent, IncidentFailedEvent
 from sentinel.coordinator import EndToEndResult, run_end_to_end_scenario
 from sentinel.scenarios import IncidentScenario, get_scenario
 
@@ -119,3 +120,25 @@ def _run_in_background(state: _IncidentState, scenario: IncidentScenario) -> Non
             state.completed.set()
 
     state.task = asyncio.create_task(runner())
+
+
+@router.get("/{incident_id}/stream")
+async def stream_incident(incident_id: str) -> EventSourceResponse:
+    """Stream this incident's lifecycle events as SSE.
+
+    Each `data:` line is one JSON-encoded `IncidentEvent`. The stream
+    closes when an `incident_completed` or `incident_failed` terminal
+    event is sent.
+    """
+    state = _REGISTRY.get(incident_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Unknown incident: {incident_id}")
+
+    async def event_generator():
+        while True:
+            event = await state.queue.get()
+            yield {"data": event.model_dump_json()}
+            if isinstance(event, (IncidentCompletedEvent, IncidentFailedEvent)):
+                return
+
+    return EventSourceResponse(event_generator())
