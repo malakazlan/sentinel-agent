@@ -5,6 +5,9 @@ A discriminated union over event types. The frontend's TypeScript mirror
 in `web/lib/types.ts` MUST match these field names exactly. Drift here
 breaks the frontend; the unit tests are the contract.
 
+Parse a payload with `IncidentEvent.validate_json(payload)` — it returns
+the right concrete subclass based on the `type` discriminator.
+
 Event lifecycle (one incident):
   incident_started
   seed_completed
@@ -28,7 +31,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
 StageName = Literal["investigate", "root_cause", "remediation", "postmortem"]
@@ -37,6 +40,8 @@ Severity = Literal["P0", "P1", "P2", "P3"]
 
 class _EventBase(BaseModel):
     """Common fields shared by every event in the lifecycle."""
+
+    model_config = ConfigDict(extra="forbid")
 
     incident_id: str = Field(..., min_length=1, max_length=120)
     elapsed_ms: int = Field(..., ge=0)
@@ -103,10 +108,8 @@ _EVENT_UNION = Annotated[
 ]
 
 
-class IncidentEvent(RootModel[_EVENT_UNION]):
-    """Discriminated union — `IncidentEvent.model_validate_json(payload)`
-    returns the right subclass based on the `type` field."""
+IncidentEvent = TypeAdapter(_EVENT_UNION)
+"""TypeAdapter for the discriminated union. Use:
 
-    @classmethod
-    def model_validate_json(cls, payload: str | bytes) -> _EVENT_UNION:  # type: ignore[override]
-        return super().model_validate_json(payload).root
+    parsed = IncidentEvent.validate_json(payload)  # returns the right subclass
+"""

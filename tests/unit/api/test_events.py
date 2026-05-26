@@ -5,7 +5,6 @@ the frontend's TypeScript mirror breaks; these tests are the contract."""
 from __future__ import annotations
 
 import json
-from datetime import datetime
 
 import pytest
 from pydantic import ValidationError
@@ -32,7 +31,7 @@ def test_incident_started_round_trips_through_json() -> None:
         watched_project="fraud-detector-prod",
     )
     payload = ev.model_dump_json()
-    parsed = IncidentEvent.model_validate_json(payload)
+    parsed = IncidentEvent.validate_json(payload)
     assert parsed == ev
     assert parsed.type == "incident_started"
 
@@ -91,7 +90,7 @@ def test_incident_event_discriminator_routes_to_right_subclass() -> None:
         "authors": ["coordinator", "remediation"],
         "final_text": "...",
     })
-    parsed = IncidentEvent.model_validate_json(raw)
+    parsed = IncidentEvent.validate_json(raw)
     assert isinstance(parsed, StageCompletedEvent)
 
 
@@ -112,4 +111,69 @@ def test_completeness_score_bounded() -> None:
             completeness_score=1.5,  # > 1.0
             completeness_label="complete",
             postmortem_json="{}",
+        )
+
+
+def test_extra_fields_are_rejected() -> None:
+    """Wire contract must reject unknown fields — drift between FE and BE
+    must surface as ValidationError, not silent drop."""
+    raw = json.dumps({
+        "type": "incident_started",
+        "incident_id": "x",
+        "elapsed_ms": 0,
+        "scenario_id": "s",
+        "severity": "P1",
+        "title": "t",
+        "watched_project": "p",
+        "rogue_field": 123,
+    })
+    with pytest.raises(ValidationError):
+        IncidentEvent.validate_json(raw)
+
+
+def test_seed_completed_round_trips() -> None:
+    ev = SeedCompletedEvent(
+        incident_id="x",
+        elapsed_ms=120,
+        project="fraud-detector-prod",
+        spans_written=42,
+        n_ok=30,
+        n_error=12,
+    )
+    payload = ev.model_dump_json()
+    parsed = IncidentEvent.validate_json(payload)
+    assert parsed == ev
+    assert parsed.type == "seed_completed"
+
+
+def test_incident_completed_round_trips() -> None:
+    ev = IncidentCompletedEvent(
+        incident_id="x",
+        elapsed_ms=254000,
+        total_latency_ms=254000,
+    )
+    payload = ev.model_dump_json()
+    parsed = IncidentEvent.validate_json(payload)
+    assert parsed == ev
+    assert parsed.type == "incident_completed"
+
+
+def test_negative_elapsed_ms_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        IncidentCompletedEvent(
+            incident_id="x",
+            elapsed_ms=-1,
+            total_latency_ms=0,
+        )
+
+
+def test_negative_latency_ms_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        StageCompletedEvent(
+            incident_id="x",
+            elapsed_ms=0,
+            stage="investigate",
+            latency_ms=-1,
+            authors=["coordinator"],
+            final_text="...",
         )
