@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sentinel — Live incident console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- ── topbar ─────────────────────────────────────────────────── -->
+    <header class="topbar">
+      <div style="display:flex; align-items:center; gap:32px;">
+        <a href="index.html" class="topbar__brand" style="color:inherit; text-decoration:none;">
+          <span class="topbar__brand-mark">S</span>
+          <span>Sentinel</span>
+        </a>
+        <nav class="topbar__nav">
+          <a href="index.html">Scenarios</a>
+          <a href="incident.html" class="active">Live console</a>
+          <a href="postmortem.html">Postmortem</a>
+        </nav>
+      </div>
+      <div class="topbar__meta">
+        <span><span class="dot"></span>Pipeline running</span>
+        <span>fraud-detector-prod</span>
+      </div>
+    </header>
+
+    <!-- ── main ───────────────────────────────────────────────────── -->
+    <main class="main">
+
+      <!-- ── incident header ───────────────────────────────────────── -->
+      <div class="incident-header">
+        <div>
+          <div class="incident-header__meta" style="margin-bottom: 10px;">
+            <span class="badge badge--p1">P1</span>
+            <span class="mono">fraud-fp-spike-20260526T133012Z</span>
+            <span>·</span>
+            <span>Fraud detection</span>
+            <span>·</span>
+            <span>fraud-detector-prod-us-central1</span>
+          </div>
+          <h1 class="incident-header__title">False-positive burst on electronics classifier</h1>
+          <p class="incident-header__summary">
+            FP rate spiked to 21.3% on the electronics merchant category, 3× the 7.2% baseline.
+            1,247 transactions blocked, 312 accounts frozen since onset. Watched system:
+            fraud-classifier-v2.3.1, deployed 18 minutes before alert.
+          </p>
+        </div>
+        <div class="incident-header__right">
+          <div class="elapsed__label">Elapsed</div>
+          <div class="elapsed">02:43</div>
+          <button class="btn btn--secondary" style="margin-top: 8px;">Pause</button>
+        </div>
+      </div>
+
+      <!-- ── metric row ───────────────────────────────────────────── -->
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric__label">Round-trips</div>
+          <div class="metric__value">2</div>
+          <div class="metric__delta">−1 vs cold (3)</div>
+        </div>
+        <div class="metric">
+          <div class="metric__label">Traces analyzed</div>
+          <div class="metric__value">42</div>
+          <div class="metric__sub">30 OK · 12 ERROR</div>
+        </div>
+        <div class="metric">
+          <div class="metric__label">Error rate</div>
+          <div class="metric__value">28.6%</div>
+          <div class="metric__sub">baseline 7.2%</div>
+        </div>
+        <div class="metric">
+          <div class="metric__label">Completeness</div>
+          <div class="metric__value">—</div>
+          <div class="metric__sub">scored after postmortem</div>
+        </div>
+      </div>
+
+      <!-- ── live agent stepper ───────────────────────────────────── -->
+      <section class="section">
+        <div class="section__head">
+          <span class="section__title">Agent activity</span>
+          <span class="dim">live · server-sent events</span>
+        </div>
+
+        <div class="card" style="padding: 8px 24px;">
+          <div class="stepper">
+
+            <!-- Coordinator -->
+            <div class="step step--done">
+              <div class="step__dot">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg>
+              </div>
+              <div>
+                <div class="step__name">Coordinator <span class="badge">gemini-3.1-pro</span></div>
+                <div class="step__action">Synthesized prior context from Phoenix MCP — 17 past investigations, derived 1 routing directive.</div>
+              </div>
+              <div class="step__meta">+0s · 4.2s</div>
+            </div>
+
+            <!-- learned routing callout — the single accent -->
+            <div class="routing-callout">
+              <svg class="routing-callout__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+              <div>
+                <div class="routing-callout__body">
+                  <span class="routing-callout__label">Learned routing</span>
+                  Skip eval_runner on first turn — hallucination eval is no-op when traces lack tool calls (observed in 12 of 17 prior runs).
+                </div>
+                <div class="routing-callout__source">Source: Phoenix MCP · runs of last 30 days · confidence high</div>
+              </div>
+            </div>
+
+            <!-- Trace analyzer -->
+            <div class="step step--done">
+              <div class="step__dot">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg>
+              </div>
+              <div>
+                <div class="step__name">Trace analyzer <span class="badge">gemini-3.1-flash-lite</span></div>
+                <div class="step__action">Pulled 50 root traces · identified bimodal pattern: 12 ERROR clustered on electronics merchant_category, $800–$1,350 range.</div>
+              </div>
+              <div class="step__meta">+4.2s · 58.1s</div>
+            </div>
+
+            <!-- Eval runner (skipped) -->
+            <div class="step step--queued">
+              <div class="step__dot">—</div>
+              <div>
+                <div class="step__name">Eval runner <span class="badge">skipped</span></div>
+                <div class="step__action">Skipped per learned routing directive.</div>
+              </div>
+              <div class="step__meta">—</div>
+            </div>
+
+            <!-- Root cause -->
+            <div class="step step--done">
+              <div class="step__dot">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg>
+              </div>
+              <div>
+                <div class="step__name">Root cause <span class="badge">gemini-3.1-pro</span></div>
+                <div class="step__action">Hypothesis 1 (high confidence): over-sensitive thresholding for electronics > $800. true_label = APPROVE on every error span.</div>
+              </div>
+              <div class="step__meta">+62.3s · 60.8s</div>
+            </div>
+
+            <!-- Remediation (running) -->
+            <div class="step step--running">
+              <div class="step__dot">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              </div>
+              <div>
+                <div class="step__name">Remediation <span class="badge badge--running">running</span></div>
+                <div class="step__action">Drafting patched prompt + electronics_false_positive_rate eval guardrail…</div>
+              </div>
+              <div class="step__meta">+123.1s · 40.4s</div>
+            </div>
+
+            <!-- Postmortem (queued) -->
+            <div class="step step--queued">
+              <div class="step__dot">6</div>
+              <div>
+                <div class="step__name">Postmortem</div>
+                <div class="step__action">Awaiting remediation. Will emit validated Google-SRE document.</div>
+              </div>
+              <div class="step__meta">queued</div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- ── determinism comparison ───────────────────────────────── -->
+      <section class="section">
+        <div class="section__head">
+          <span class="section__title">Self-improvement loop · determinism delta</span>
+          <span class="dim">across last 5 reproduction runs</span>
+        </div>
+
+        <div class="card">
+          <div class="deter">
+
+            <!-- Cold -->
+            <div>
+              <div class="deter__title">
+                <h3 style="font-size: 14px;">Cold start</h3>
+                <span class="badge">no prior context</span>
+              </div>
+
+              <div class="deter__row">
+                <div class="deter__label">Round trips</div>
+                <div class="deter__bar"><div class="deter__bar-fill deter__bar-fill--cold" style="width: 75%;"></div></div>
+                <div class="deter__count">3 of 4</div>
+              </div>
+              <div class="deter__row">
+                <div class="deter__label">First route</div>
+                <div class="deter__bar"><div class="deter__bar-fill deter__bar-fill--cold" style="width: 100%;"></div></div>
+                <div class="deter__count">root_cause</div>
+              </div>
+              <div class="deter__row">
+                <div class="deter__label">Wall clock</div>
+                <div class="deter__bar"><div class="deter__bar-fill deter__bar-fill--cold" style="width: 100%;"></div></div>
+                <div class="deter__count">~32s</div>
+              </div>
+
+              <p class="deter__caption">
+                Without Phoenix MCP introspection, coordinator picks root_cause first and runs the full chain.
+              </p>
+            </div>
+
+            <!-- Warm -->
+            <div>
+              <div class="deter__title">
+                <h3 style="font-size: 14px;">Warm</h3>
+                <span class="badge badge--ok">5 / 5 deterministic</span>
+              </div>
+
+              <div class="deter__row">
+                <div class="deter__label">Round trips</div>
+                <div class="deter__bar"><div class="deter__bar-fill deter__bar-fill--warm" style="width: 50%;"></div></div>
+                <div class="deter__count">2 of 4</div>
+              </div>
+              <div class="deter__row">
+                <div class="deter__label">First route</div>
+                <div class="deter__bar"><div class="deter__bar-fill deter__bar-fill--warm" style="width: 100%;"></div></div>
+                <div class="deter__count">trace_analyzer</div>
+              </div>
+              <div class="deter__row">
+                <div class="deter__label">Wall clock</div>
+                <div class="deter__bar"><div class="deter__bar-fill deter__bar-fill--warm" style="width: 47%;"></div></div>
+                <div class="deter__count">~15s</div>
+              </div>
+
+              <p class="deter__caption">
+                With prior-run directive: skips eval_runner, opens with trace_analyzer. Identical path 5/5.
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- ── action footer ────────────────────────────────────────── -->
+      <div style="margin-top: 40px; display: flex; align-items: center; justify-content: space-between; padding: 20px 0; border-top: 1px solid var(--border);">
+        <div class="dim" style="font-size: 13px;">
+          Phoenix trace tree available at <span class="mono" style="color: var(--text-secondary);">localhost:6006/projects/fraud-detector-prod</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn--secondary">Open in Phoenix</button>
+          <a class="btn btn--primary" href="postmortem.html">View postmortem →</a>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</body>
+</html>

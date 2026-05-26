@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sentinel — Incident response</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- ── topbar ─────────────────────────────────────────────────── -->
+    <header class="topbar">
+      <div style="display:flex; align-items:center; gap:32px;">
+        <a href="index.html" class="topbar__brand" style="color:inherit; text-decoration:none;">
+          <span class="topbar__brand-mark">S</span>
+          <span>Sentinel</span>
+        </a>
+        <nav class="topbar__nav">
+          <a href="index.html" class="active">Scenarios</a>
+          <a href="incident.html">Live console</a>
+          <a href="postmortem.html">Postmortem</a>
+        </nav>
+      </div>
+      <div class="topbar__meta">
+        <span><span class="dot"></span>Phoenix reachable · sentinel</span>
+        <span>fraud-detector-prod, kyc-screener-prod, underwriting-prod</span>
+      </div>
+    </header>
+
+    <!-- ── main ───────────────────────────────────────────────────── -->
+    <main class="main">
+      <div style="margin-bottom: 32px;">
+        <h1 style="margin-bottom: 10px;">Incident response scenarios</h1>
+        <p style="font-size: 15px; max-width: 720px;">
+          Three production AI workloads with known failure modes. Each runs the full five-agent pipeline —
+          coordinator, trace analyzer, eval runner, root cause, remediation, postmortem — against seeded
+          watched-system traces and produces a validated Google-SRE postmortem.
+        </p>
+      </div>
+
+      <div class="scenarios">
+        <!-- scenario 1 — fraud -->
+        <a class="scenario" href="incident.html">
+          <div class="scenario__head">
+            <span class="scenario__workflow">Fraud detection</span>
+            <span class="badge badge--p1">P1</span>
+          </div>
+          <h2 class="scenario__title">False-positive burst on transaction classifier</h2>
+          <p class="scenario__desc">
+            FP rate spiked 3× in 90 seconds on the electronics merchant category.
+            1,247 legitimate transactions blocked, 312 customer accounts frozen,
+            $84.3k in revenue at risk.
+          </p>
+          <div class="scenario__meta">
+            <span>fraud-detector-prod · 42 spans seeded</span>
+            <span class="scenario__cta">Run pipeline →</span>
+          </div>
+        </a>
+
+        <!-- scenario 2 — kyc -->
+        <a class="scenario" href="incident.html">
+          <div class="scenario__head">
+            <span class="scenario__workflow">KYC / AML</span>
+            <span class="badge badge--p0">P0</span>
+          </div>
+          <h2 class="scenario__title">Sanctions-list hallucination on PEP screener</h2>
+          <p class="scenario__desc">
+            LLM-based PEP screener returned 7 fabricated OFAC matches in 120 seconds,
+            0 real matches in the same window. Regulatory disclosure threshold breached
+            (FCA SUP 15.3, EU 5MLD Art. 33).
+          </p>
+          <div class="scenario__meta">
+            <span>kyc-screener-prod · 32 spans seeded</span>
+            <span class="scenario__cta">Run pipeline →</span>
+          </div>
+        </a>
+
+        <!-- scenario 3 — lending -->
+        <a class="scenario" href="incident.html">
+          <div class="scenario__head">
+            <span class="scenario__workflow">Lending / underwriting</span>
+            <span class="badge badge--p2">P2</span>
+          </div>
+          <h2 class="scenario__title">Latency regression after model deploy</h2>
+          <p class="scenario__desc">
+            Underwriting model p99 jumped 280ms to 4,234ms within 8 minutes of deploy.
+            89 underwriting decisions delayed, 12 user-facing timeouts, SLA breached
+            (target 800ms).
+          </p>
+          <div class="scenario__meta">
+            <span>underwriting-prod · 48 spans seeded</span>
+            <span class="scenario__cta">Run pipeline →</span>
+          </div>
+        </a>
+      </div>
+
+      <!-- ── recent runs ────────────────────────────────────────────── -->
+      <section class="section" style="margin-top: 56px;">
+        <div class="section__head">
+          <span class="section__title">Recent runs</span>
+          <a href="#" class="btn btn--ghost">View all</a>
+        </div>
+
+        <div class="card" style="padding: 0;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border); text-align: left;">
+                <th style="padding: 12px 20px; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em;">Incident</th>
+                <th style="padding: 12px 20px; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em;">Severity</th>
+                <th style="padding: 12px 20px; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em;">Round trips</th>
+                <th style="padding: 12px 20px; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em;">Latency</th>
+                <th style="padding: 12px 20px; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em;">Completeness</th>
+                <th style="padding: 12px 20px; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em;">Started</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 14px 20px; font-weight: 500;">fraud-fp-spike-20260526T133012Z</td>
+                <td style="padding: 14px 20px;"><span class="badge badge--p1">P1</span></td>
+                <td style="padding: 14px 20px;" class="mono">2 <span class="dim">(warm)</span></td>
+                <td style="padding: 14px 20px;" class="mono">2m 43s</td>
+                <td style="padding: 14px 20px;" class="mono">1.000</td>
+                <td style="padding: 14px 20px; color: var(--text-tertiary);">3 min ago</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 14px 20px; font-weight: 500;">kyc-pep-fabrication-20260526T102015Z</td>
+                <td style="padding: 14px 20px;"><span class="badge badge--p0">P0</span></td>
+                <td style="padding: 14px 20px;" class="mono">2 <span class="dim">(warm)</span></td>
+                <td style="padding: 14px 20px;" class="mono">3m 59s</td>
+                <td style="padding: 14px 20px;" class="mono">1.000</td>
+                <td style="padding: 14px 20px; color: var(--text-tertiary);">1 hr ago</td>
+              </tr>
+              <tr>
+                <td style="padding: 14px 20px; font-weight: 500;">lending-p99-regression-20260524T143022Z</td>
+                <td style="padding: 14px 20px;"><span class="badge badge--p2">P2</span></td>
+                <td style="padding: 14px 20px;" class="mono">3 <span class="dim">(cold)</span></td>
+                <td style="padding: 14px 20px;" class="mono">3m 11s</td>
+                <td style="padding: 14px 20px;" class="mono">1.000</td>
+                <td style="padding: 14px 20px; color: var(--text-tertiary);">Yesterday</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

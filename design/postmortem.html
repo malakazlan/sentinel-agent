@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sentinel — Postmortem</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- ── topbar ─────────────────────────────────────────────────── -->
+    <header class="topbar">
+      <div style="display:flex; align-items:center; gap:32px;">
+        <a href="index.html" class="topbar__brand" style="color:inherit; text-decoration:none;">
+          <span class="topbar__brand-mark">S</span>
+          <span>Sentinel</span>
+        </a>
+        <nav class="topbar__nav">
+          <a href="index.html">Scenarios</a>
+          <a href="incident.html">Live console</a>
+          <a href="postmortem.html" class="active">Postmortem</a>
+        </nav>
+      </div>
+      <div class="topbar__meta">
+        <span>Validated · completeness 1.000</span>
+        <button class="btn btn--ghost" style="font-size: 12px; padding: 4px 10px;">Export JSON</button>
+      </div>
+    </header>
+
+    <!-- ── main ───────────────────────────────────────────────────── -->
+    <main class="main">
+
+      <div class="pm-doc">
+
+        <!-- ── head ────────────────────────────────────────────────── -->
+        <header class="pm-doc__head">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
+            <span class="badge badge--p1">P1</span>
+            <span class="badge badge--ok">Validated · 1.000</span>
+            <span class="mono dim">fraud-fp-spike-20260526T133012Z</span>
+          </div>
+          <h1 class="pm-doc__title">False Positive Spike in Electronics Transaction Classification</h1>
+          <div class="pm-doc__meta">
+            <span>Generated 2 min ago</span>
+            <span>·</span>
+            <span>fraud-classifier-v2.3.1</span>
+            <span>·</span>
+            <span>fraud-detector-prod</span>
+          </div>
+        </header>
+
+        <!-- ── summary ─────────────────────────────────────────────── -->
+        <section class="pm-section">
+          <div class="pm-section__label">Summary</div>
+          <p class="pm-section__body">
+            A spike in false positive fraud classifications occurred for retail electronics transactions.
+            The fraud detection model incorrectly flagged 12 consecutive legitimate transactions as
+            fraudulent between 13:16 and 13:21 UTC.
+          </p>
+        </section>
+
+        <!-- ── impact ──────────────────────────────────────────────── -->
+        <section class="pm-section">
+          <div class="pm-section__label">Impact</div>
+          <p class="pm-section__body">
+            12 legitimate retail transactions in the electronics category were incorrectly declined by the
+            fraud detection system. This resulted in direct customer friction and potential revenue loss
+            for these specific transactions.
+          </p>
+        </section>
+
+        <!-- ── timeline ────────────────────────────────────────────── -->
+        <section class="pm-section">
+          <div class="pm-section__label">Timeline</div>
+          <ul class="pm-timeline">
+            <li>
+              <span class="pm-timeline__time">13:16 UTC</span>
+              <span>Onset of false positive spike detected in electronics category transactions.</span>
+            </li>
+            <li>
+              <span class="pm-timeline__time">13:21 UTC</span>
+              <span>Final observed false positive trace in the current window.</span>
+            </li>
+            <li>
+              <span class="pm-timeline__time">13:22 UTC</span>
+              <span>Postmortem drafted from trace evidence; investigation into model drift or feature bias pending.</span>
+            </li>
+          </ul>
+        </section>
+
+        <!-- ── root cause ──────────────────────────────────────────── -->
+        <section class="pm-section">
+          <div class="pm-section__label">Root cause</div>
+          <p class="pm-section__body">
+            The fraud classification model exhibited high-confidence false positives specifically for
+            transactions in the <span class="mono" style="background: var(--bg-inset); padding: 1px 6px; border-radius: 4px;">electronics</span>
+            merchant category. The model incorrectly associated these transactions with fraudulent patterns,
+            likely due to recent feature weight shifts or training data bias.
+          </p>
+        </section>
+
+        <!-- ── detection ───────────────────────────────────────────── -->
+        <section class="pm-section">
+          <div class="pm-section__label">Detection</div>
+          <p class="pm-section__body">
+            Discovered via automated monitoring of classification error rates and post-hoc verification
+            logs, which flagged the discrepancy between model output and verified transaction status.
+          </p>
+        </section>
+
+        <!-- ── resolution ──────────────────────────────────────────── -->
+        <section class="pm-section">
+          <div class="pm-section__label">Resolution</div>
+          <p class="pm-section__body">
+            Investigation is ongoing. Immediate mitigation involves reviewing the recent model deployment
+            and evaluating the necessity of a rollback to the previous stable version.
+          </p>
+        </section>
+
+        <!-- ── action items ────────────────────────────────────────── -->
+        <section class="pm-section">
+          <div class="pm-section__label">Action items</div>
+          <div class="pm-action-items">
+            <div class="pm-action-item">
+              <div class="pm-action-item__desc">
+                Perform root cause analysis on the model's sensitivity to <span class="mono" style="background: var(--bg-inset); padding: 1px 6px; border-radius: 4px;">electronics</span>
+                category transactions to identify specific feature bias.
+              </div>
+              <div class="pm-action-item__meta">
+                <span class="badge badge--p1">P1</span>
+                <span>fraud-ml-team</span>
+                <span>7 days</span>
+              </div>
+            </div>
+            <div class="pm-action-item">
+              <div class="pm-action-item__desc">
+                Implement automated guardrails to prevent high-confidence false positives for known
+                low-risk merchant categories.
+              </div>
+              <div class="pm-action-item__meta">
+                <span class="badge badge--p2">P2</span>
+                <span>fraud-ml-team</span>
+                <span>14 days</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── lessons learned ─────────────────────────────────────── -->
+        <section class="pm-section">
+          <div class="pm-section__label">Lessons learned</div>
+          <ul class="pm-list">
+            <li>
+              Model confidence scores can be misleading during drift events; high-confidence predictions
+              should still be subject to category-based sanity checks.
+            </li>
+            <li>
+              Real-time monitoring of classification error rates by merchant category is essential for
+              early detection of segment-specific model degradation.
+            </li>
+          </ul>
+        </section>
+
+        <!-- ── remediation draft (collapsed reference) ─────────────── -->
+        <section class="pm-section" style="margin-top: 48px; padding-top: 32px; border-top: 1px solid var(--border);">
+          <div class="pm-section__label">Proposed remediation</div>
+          <div class="card card--inset" style="padding: 18px 20px; margin-top: 12px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span class="badge badge--p1">P1</span>
+                <span style="font-weight: 600;">Patched prompt + eval guardrail</span>
+              </div>
+              <span class="dim" style="font-size: 12px;">confidence: high</span>
+            </div>
+            <p style="font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px;">
+              For <span class="mono" style="background: var(--bg); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border);">electronics</span>
+              category transactions, do not flag as <span class="mono" style="background: var(--bg); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border);">FRAUD</span>
+              solely based on amount unless there are additional risk indicators.
+              Add <span class="mono" style="background: var(--bg); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border);">electronics_false_positive_rate</span>
+              guardrail at 5% threshold.
+            </p>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn--primary">Apply to staging</button>
+              <button class="btn btn--secondary">Open full plan</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+    </main>
+  </div>
+</body>
+</html>
