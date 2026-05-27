@@ -26,6 +26,7 @@ const config: Config = {
         "accent-border": "#bfdbfe",
         "cta-bg": "#18181b",
         "cta-bg-hover": "#27272a",
+        "cta-text": "#ffffff",
       },
       fontFamily: {
         sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "system-ui", "sans-serif"],

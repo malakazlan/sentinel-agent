@@ -16,6 +16,8 @@
   }
 }
 
-.font-mono {
-  font-family: var(--font-mono), ui-monospace, "SF Mono", Menlo, monospace;
+@layer utilities {
+  .font-mono {
+    font-family: var(--font-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  }
 }
