@@ -8,8 +8,8 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default: "border-border bg-bg text-text-secondary",
-        ok: "border-[#bbf7d0] bg-[#f0fdf4] text-ok",
-        error: "border-[#fecaca] bg-[#fef2f2] text-error",
+        ok: "border-ok-border bg-ok-bg text-ok",
+        error: "border-error-border bg-error-bg text-error",
         running: "border-accent-border bg-accent-bg text-running",
         p0: "border-p0 bg-p0 text-cta-text",
         p1: "border-p1 bg-p1 text-cta-text",
