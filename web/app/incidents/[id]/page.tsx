@@ -56,8 +56,6 @@ const STEPS: AgentStep[] = [
 ];
 
 export default function IncidentPage({ params }: { params: { id: string } }) {
-  void params.id; // unused until Task 7 wires this to real data
-
   return (
     <div className="min-h-screen">
       <Topbar
@@ -165,7 +163,7 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
           </div>
           <div className="flex gap-2">
             <Button variant="secondary">Open in Phoenix</Button>
-            <Link href={`/incidents/_/postmortem` as Route}>
+            <Link href={`/incidents/${params.id}/postmortem` as Route}>
               <Button variant="primary">View postmortem →</Button>
             </Link>
           </div>

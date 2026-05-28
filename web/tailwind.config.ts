@@ -28,6 +28,7 @@ const config: Config = {
         accent: "#1e40af",
         "accent-bg": "#eff6ff",
         "accent-border": "#bfdbfe",
+        "accent-text": "#1e3a8a",
         "cta-bg": "#18181b",
         "cta-bg-hover": "#27272a",
         "cta-text": "#ffffff",
