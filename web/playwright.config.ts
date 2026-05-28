@@ -6,9 +6,11 @@ import { defineConfig, devices } from "@playwright/test";
  *
  * Costs ~$0.10 of Vertex calls per run. Treat as a release-gate test, not
  * a CI-on-every-PR test.
+ *
+ * Run from `web/`:  npx playwright test
  */
 export default defineConfig({
-  testDir: "./web/tests-e2e",
+  testDir: "./tests-e2e",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
@@ -35,14 +37,14 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: ".\\.venv\\Scripts\\python.exe -m uvicorn sentinel.api.main:app --port 8000",
+      command: ".venv\\Scripts\\python.exe -m uvicorn sentinel.api.main:app --port 8000",
+      cwd: "..",
       url: "http://localhost:8000/health",
       timeout: 60_000,
       reuseExistingServer: true,
     },
     {
       command: "npm run dev",
-      cwd: "./web",
       url: "http://localhost:3000",
       timeout: 60_000,
       reuseExistingServer: true,
