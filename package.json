@@ -1,0 +1,9 @@
+{
+  "name": "sentinel-root",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Root workspace shim: lets Playwright (configured at repo root) resolve @playwright/test from web/node_modules via a hoisted dep.",
+  "dependencies": {
+    "@playwright/test": "1.49.0"
+  }
+}

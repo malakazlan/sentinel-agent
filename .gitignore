@@ -28,3 +28,9 @@ web/out/
 web/.env.local
 web/next-env.d.ts
 web/*.tsbuildinfo
+
+# Playwright
+test-results/
+playwright-report/
+web/tests-e2e/.auth/
+node_modules/
