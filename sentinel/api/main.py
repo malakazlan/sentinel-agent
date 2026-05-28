@@ -6,10 +6,20 @@ Mount this with uvicorn:
 
 from __future__ import annotations
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
-from sentinel.api.incidents import router as incidents_router
+# Load .env BEFORE any sentinel imports so Vertex AI config
+# (GOOGLE_CLOUD_PROJECT, GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_CLOUD_LOCATION) is in
+# the environment by the time the ADK Client is constructed.
+load_dotenv()
+
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+from sentinel.api.incidents import router as incidents_router  # noqa: E402
+from sentinel.observability.instrumentation import setup_tracing  # noqa: E402
+
+setup_tracing()
 
 
 def create_app() -> FastAPI:
