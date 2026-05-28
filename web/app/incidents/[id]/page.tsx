@@ -1,102 +1,164 @@
+"use client";
+
 import Link from "next/link";
 import type { Route } from "next";
+import { useMemo } from "react";
 import { Topbar } from "@/components/topbar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MetricCard } from "@/components/metric-card";
-import { AgentStepper, type AgentStep } from "@/components/agent-stepper";
+import { AgentStepper, type AgentStep, type StepStatus } from "@/components/agent-stepper";
 import { RoutingCallout } from "@/components/routing-callout";
 import { DeterminismBars } from "@/components/determinism-bars";
+import { useIncidentStream } from "@/lib/sse";
+import type { IncidentEvent, StageName } from "@/lib/types";
 
-// Static placeholder data — replaced by SSE wiring in Task 7.
-const STEPS: AgentStep[] = [
-  {
-    name: "Coordinator",
-    model: "gemini-3.1-pro",
-    status: "done",
-    action: "Synthesized prior context from Phoenix MCP — 17 past investigations, derived 1 routing directive.",
-    meta: "+0s · 4.2s",
-  },
-  {
-    name: "Trace analyzer",
-    model: "gemini-3.1-flash-lite",
-    status: "done",
-    action:
-      "Pulled 50 root traces · identified bimodal pattern: 12 ERROR clustered on electronics merchant_category, $800–$1,350 range.",
-    meta: "+4.2s · 58.1s",
-  },
-  {
-    name: "Eval runner",
-    status: "skipped",
-    action: "Skipped per learned routing directive.",
-    meta: "—",
-    badge: { label: "skipped" },
-  },
-  {
-    name: "Root cause",
-    model: "gemini-3.1-pro",
-    status: "done",
-    action:
-      "Hypothesis 1 (high confidence): over-sensitive thresholding for electronics > $800. true_label = APPROVE on every error span.",
-    meta: "+62.3s · 60.8s",
-  },
-  {
-    name: "Remediation",
-    status: "running",
-    action: "Drafting patched prompt + electronics_false_positive_rate eval guardrail…",
-    meta: "+123.1s · 40.4s",
-    badge: { label: "running", variant: "running" },
-  },
-  {
-    name: "Postmortem",
-    status: "queued",
-    action: "Awaiting remediation. Will emit validated Google-SRE document.",
-    meta: "queued",
-  },
+const STAGES_IN_ORDER: { stage: StageName; name: string; model: string }[] = [
+  { stage: "investigate", name: "Trace analyzer", model: "gemini-3.1-flash-lite" },
+  { stage: "root_cause", name: "Root cause", model: "gemini-3.1-pro" },
+  { stage: "remediation", name: "Remediation", model: "gemini-3.1-pro" },
+  { stage: "postmortem", name: "Postmortem", model: "gemini-3.1-flash-lite" },
 ];
 
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function severityVariant(sev: string): "p0" | "p1" | "p2" | "p3" {
+  const lc = sev.toLowerCase();
+  if (lc === "p0" || lc === "p1" || lc === "p2" || lc === "p3") return lc;
+  return "p1";
+}
+
+function deriveStepper(events: IncidentEvent[]): AgentStep[] {
+  const incidentStarted = events.find((e): e is Extract<IncidentEvent, { type: "incident_started" }> => e.type === "incident_started");
+  const seedCompleted = events.find((e): e is Extract<IncidentEvent, { type: "seed_completed" }> => e.type === "seed_completed");
+  const stageStarted = new Map<StageName, Extract<IncidentEvent, { type: "stage_started" }>>();
+  const stageCompleted = new Map<StageName, Extract<IncidentEvent, { type: "stage_completed" }>>();
+
+  for (const event of events) {
+    if (event.type === "stage_started") stageStarted.set(event.stage, event);
+    if (event.type === "stage_completed") stageCompleted.set(event.stage, event);
+  }
+
+  const coordinatorStatus: StepStatus = incidentStarted ? "done" : "queued";
+  const coordinatorAction = seedCompleted
+    ? `Seeded ${seedCompleted.spans_written} spans into watched project; routing the pipeline.`
+    : "Synthesizing prior context and deriving routing directives.";
+
+  const steps: AgentStep[] = [
+    {
+      name: "Coordinator",
+      model: "gemini-3.1-pro",
+      status: coordinatorStatus,
+      action: coordinatorAction,
+      meta: incidentStarted ? `+0s · ${formatMs(incidentStarted.elapsed_ms)}` : "queued",
+    },
+  ];
+
+  for (const { stage, name, model } of STAGES_IN_ORDER) {
+    const start = stageStarted.get(stage);
+    const end = stageCompleted.get(stage);
+    let status: StepStatus = "queued";
+    if (end) status = "done";
+    else if (start) status = "running";
+
+    const action = end
+      ? end.final_text.slice(0, 240) + (end.final_text.length > 240 ? "…" : "")
+      : start
+      ? "Running…"
+      : "Awaiting upstream stage.";
+
+    const meta = end
+      ? `+${formatMs(start ? start.elapsed_ms : end.elapsed_ms)} · ${formatMs(end.latency_ms)}`
+      : start
+      ? `+${formatMs(start.elapsed_ms)} · running`
+      : "queued";
+
+    const step: AgentStep = { name, model, status, action, meta };
+    if (status === "running") {
+      step.badge = { label: "running", variant: "running" };
+    }
+    steps.push(step);
+  }
+
+  return steps;
+}
+
 export default function IncidentPage({ params }: { params: { id: string } }) {
+  const stream = useIncidentStream(params.id);
+
+  const incidentStarted = stream.events.find(
+    (e): e is Extract<IncidentEvent, { type: "incident_started" }> => e.type === "incident_started"
+  );
+  const seedCompleted = stream.events.find(
+    (e): e is Extract<IncidentEvent, { type: "seed_completed" }> => e.type === "seed_completed"
+  );
+  const postmortemValidated = stream.events.find(
+    (e): e is Extract<IncidentEvent, { type: "postmortem_validated" }> => e.type === "postmortem_validated"
+  );
+  const completed = stream.events.find(
+    (e) => e.type === "incident_completed" || e.type === "incident_failed"
+  );
+
+  const elapsedMs = stream.events.length > 0
+    ? stream.events[stream.events.length - 1]?.elapsed_ms ?? 0
+    : 0;
+
+  const steps = useMemo(() => deriveStepper(stream.events), [stream.events]);
+
+  const tracesValue = seedCompleted ? `${seedCompleted.spans_written}` : "—";
+  const tracesSub = seedCompleted ? `${seedCompleted.n_ok} OK · ${seedCompleted.n_error} ERROR` : undefined;
+  const errorRate = seedCompleted
+    ? ((seedCompleted.n_error / Math.max(1, seedCompleted.n_error + seedCompleted.n_ok)) * 100).toFixed(1)
+    : "—";
+
   return (
     <div className="min-h-screen">
       <Topbar
         active="console"
-        status={{ dot: "running", label: "Pipeline running" }}
-        context="fraud-detector-prod"
+        status={
+          completed
+            ? { dot: "ok", label: "Pipeline finished" }
+            : { dot: "running", label: "Pipeline running" }
+        }
+        context={incidentStarted?.watched_project ?? ""}
       />
       <main className="mx-auto w-full max-w-[1180px] px-8 pb-16 pt-10">
         {/* Incident header */}
         <div className="mb-7 flex items-start justify-between gap-6">
           <div>
             <div className="mb-2.5 flex items-center gap-3 text-[13px] text-text-tertiary">
-              <Badge variant="p1">P1</Badge>
-              <span className="font-mono text-text-secondary">fraud-fp-spike-20260526T133012Z</span>
-              <span>·</span>
-              <span>Fraud detection</span>
-              <span>·</span>
-              <span>fraud-detector-prod-us-central1</span>
+              <Badge variant={incidentStarted ? severityVariant(incidentStarted.severity) : "p1"}>
+                {incidentStarted?.severity ?? "…"}
+              </Badge>
+              <span className="font-mono text-text-secondary">{params.id}</span>
             </div>
             <h1 className="mb-2 text-2xl font-semibold tracking-tight">
-              False-positive burst on electronics classifier
+              {incidentStarted?.title ?? "Loading incident…"}
             </h1>
             <p className="mt-3.5 max-w-[760px] text-text-secondary">
-              FP rate spiked to 21.3% on the electronics merchant category, 3× the 7.2% baseline.
-              1,247 transactions blocked, 312 accounts frozen since onset. Watched system:
-              fraud-classifier-v2.3.1, deployed 18 minutes before alert.
+              Watched system: {incidentStarted?.watched_project ?? "—"}. Stream status: {stream.status}.
+              {stream.error && ` Error: ${stream.error}`}
             </p>
           </div>
           <div className="flex flex-col items-end gap-2 text-right">
             <div className="text-[11px] uppercase tracking-wider text-text-tertiary">Elapsed</div>
-            <div className="font-mono text-[22px] font-medium tracking-tight">02:43</div>
-            <Button variant="secondary" className="mt-2">Pause</Button>
+            <div className="font-mono text-[22px] font-medium tracking-tight">{formatMs(elapsedMs)}</div>
           </div>
         </div>
 
         {/* Metric row */}
         <div className="mb-8 grid grid-cols-4 gap-4">
           <MetricCard label="Round-trips" value="2" delta={{ value: "−1 vs cold (3)", positive: true }} />
-          <MetricCard label="Traces analyzed" value="42" sub="30 OK · 12 ERROR" />
-          <MetricCard label="Error rate" value="28.6%" sub="baseline 7.2%" />
-          <MetricCard label="Completeness" value="—" sub="scored after postmortem" />
+          <MetricCard label="Traces analyzed" value={tracesValue} {...(tracesSub ? { sub: tracesSub } : {})} />
+          <MetricCard label="Error rate" value={`${errorRate}%`} sub="baseline 7.2%" />
+          <MetricCard
+            label="Completeness"
+            value={postmortemValidated ? postmortemValidated.completeness_score.toFixed(3) : "—"}
+            sub="scored after postmortem"
+          />
         </div>
 
         {/* Stepper */}
@@ -108,16 +170,17 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
             <span className="text-xs text-text-tertiary">live · server-sent events</span>
           </div>
           <div className="rounded-md border border-border bg-bg px-6 py-2">
-            <AgentStepper steps={STEPS.slice(0, 1)} />
+            {/* Stepper split with RoutingCallout interleaved between Coordinator and the rest. */}
+            <AgentStepper steps={steps.slice(0, 1)} />
             <RoutingCallout
               body="Skip eval_runner on first turn — hallucination eval is no-op when traces lack tool calls (observed in 12 of 17 prior runs)."
               source="Source: Phoenix MCP · runs of last 30 days · confidence high"
             />
-            <AgentStepper steps={STEPS.slice(1)} />
+            <AgentStepper steps={steps.slice(1)} />
           </div>
         </section>
 
-        {/* Determinism */}
+        {/* Determinism — static demo data; faithful to the design */}
         <section className="mb-10">
           <div className="mb-3.5 flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-text-tertiary">
@@ -159,12 +222,16 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
         <div className="mt-10 flex items-center justify-between border-t border-border py-5">
           <div className="text-[13px] text-text-tertiary">
             Phoenix trace tree available at{" "}
-            <span className="font-mono text-text-secondary">localhost:6006/projects/fraud-detector-prod</span>
+            <span className="font-mono text-text-secondary">localhost:6006</span>
           </div>
           <div className="flex gap-2">
-            <Button variant="secondary">Open in Phoenix</Button>
-            <Link href={`/incidents/${params.id}/postmortem` as Route}>
-              <Button variant="primary">View postmortem →</Button>
+            <Button variant="secondary" disabled={!completed}>
+              {completed ? "View Phoenix" : "Waiting for run to finish…"}
+            </Button>
+            <Link href={`/incidents/${encodeURIComponent(params.id)}/postmortem` as Route}>
+              <Button variant="primary" disabled={!completed}>
+                {completed ? "View postmortem →" : "Pipeline running…"}
+              </Button>
             </Link>
           </div>
         </div>

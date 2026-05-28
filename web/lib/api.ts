@@ -18,7 +18,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  if (!res.ok && res.status !== 202) {
+  if (!res.ok) {
     let detail = res.statusText;
     try {
       const body = (await res.json()) as { detail?: string };
@@ -38,8 +38,11 @@ export async function createIncident(scenario_id: string): Promise<CreateInciden
   });
 }
 
-export async function getIncident(incident_id: string): Promise<IncidentResult> {
-  return fetchJson<IncidentResult>(`${API_BASE_URL}/incidents/${incident_id}`);
+export async function getIncident(incident_id: string, signal?: AbortSignal): Promise<IncidentResult> {
+  return fetchJson<IncidentResult>(
+    `${API_BASE_URL}/incidents/${incident_id}`,
+    signal ? { signal } : undefined
+  );
 }
 
 export function streamUrl(incident_id: string): string {

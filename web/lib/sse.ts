@@ -19,6 +19,10 @@ export interface IncidentStreamState {
  * - Closes the stream when an incident_completed or incident_failed event
  *   is received (matches backend contract; native EventSource would
  *   reconnect on close otherwise)
+ * - Consumers MUST handle unknown event types defensively. JSON.parse cast
+ *   to IncidentEvent does not validate the type field at runtime — if the
+ *   backend ships a new event type, exhaustiveness switches in render
+ *   code will hit the default arm rather than throwing.
  */
 export function useIncidentStream(incident_id: string | null): IncidentStreamState {
   const [state, setState] = useState<IncidentStreamState>({

@@ -8,6 +8,8 @@ interface TopbarProps {
   context?: string;
 }
 
+// Live console and Postmortem nav targets are placeholders (`#`) until a
+// per-incident routing pattern is decided. Active highlighting still works.
 const navLinks: { href: Route; label: string; key: "scenarios" | "console" | "postmortem" }[] = [
   { href: "/" as Route, label: "Scenarios", key: "scenarios" },
   { href: "#" as Route, label: "Live console", key: "console" },
