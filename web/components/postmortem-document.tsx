@@ -1,12 +1,6 @@
 import { Badge } from "@/components/ui/badge";
-import type { Postmortem, Severity } from "@/lib/types";
-
-const sevVariant: Record<Severity, "p0" | "p1" | "p2" | "p3"> = {
-  P0: "p0",
-  P1: "p1",
-  P2: "p2",
-  P3: "p3",
-};
+import type { Postmortem } from "@/lib/types";
+import { severityVariant } from "@/lib/severity";
 
 interface PostmortemDocumentProps {
   pm: Postmortem;
@@ -29,7 +23,7 @@ export function PostmortemDocument({
     <div className="mx-auto max-w-[820px]">
       <header className="mb-8 border-b border-border pb-6">
         <div className="mb-3.5 flex items-center gap-2.5">
-          <Badge variant={sevVariant[pm.severity]}>{pm.severity}</Badge>
+          <Badge variant={severityVariant(pm.severity)}>{pm.severity}</Badge>
           {completenessScore !== undefined && (
             <Badge variant="ok">
               Validated · {completenessScore.toFixed(3)}
@@ -93,7 +87,7 @@ export function PostmortemDocument({
             >
               <div className="text-sm leading-relaxed">{ai.description}</div>
               <div className="flex flex-col items-end gap-1 whitespace-nowrap text-xs text-text-tertiary">
-                <Badge variant={sevVariant[ai.severity]}>{ai.severity}</Badge>
+                <Badge variant={severityVariant(ai.severity)}>{ai.severity}</Badge>
                 <span>{ai.owner_role}</span>
                 <span>{ai.due_within_days} days</span>
               </div>

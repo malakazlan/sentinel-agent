@@ -11,6 +11,7 @@ import { AgentStepper, type AgentStep, type StepStatus } from "@/components/agen
 import { RoutingCallout } from "@/components/routing-callout";
 import { DeterminismBars } from "@/components/determinism-bars";
 import { useIncidentStream } from "@/lib/sse";
+import { severityVariant } from "@/lib/severity";
 import type { IncidentEvent, StageName } from "@/lib/types";
 
 const STAGES_IN_ORDER: { stage: StageName; name: string; model: string }[] = [
@@ -23,12 +24,6 @@ const STAGES_IN_ORDER: { stage: StageName; name: string; model: string }[] = [
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function severityVariant(sev: string): "p0" | "p1" | "p2" | "p3" {
-  const lc = sev.toLowerCase();
-  if (lc === "p0" || lc === "p1" || lc === "p2" || lc === "p3") return lc;
-  return "p1";
 }
 
 function deriveStepper(events: IncidentEvent[]): AgentStep[] {

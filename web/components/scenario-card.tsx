@@ -3,18 +3,12 @@ import type { Route } from "next";
 import { ArrowRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { Scenario } from "@/lib/scenarios";
+import { severityVariant } from "@/lib/severity";
 
 interface ScenarioCardProps {
   scenario: Scenario;
   href: Route;
 }
-
-const severityVariant: Record<Scenario["severity"], "p0" | "p1" | "p2" | "p3"> = {
-  P0: "p0",
-  P1: "p1",
-  P2: "p2",
-  P3: "p3",
-};
 
 export function ScenarioCard({ scenario, href }: ScenarioCardProps) {
   return (
@@ -26,7 +20,7 @@ export function ScenarioCard({ scenario, href }: ScenarioCardProps) {
         <span className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">
           {scenario.workflow}
         </span>
-        <Badge variant={severityVariant[scenario.severity]}>{scenario.severity}</Badge>
+        <Badge variant={severityVariant(scenario.severity)}>{scenario.severity}</Badge>
       </div>
       <h2 className="mb-2 text-base font-semibold leading-snug">{scenario.title}</h2>
       <p className="mb-5 flex-1 text-[13px] leading-relaxed text-text-secondary">
