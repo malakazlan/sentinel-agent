@@ -2,6 +2,8 @@ import { Badge } from "@/components/ui/badge";
 import type { Postmortem } from "@/lib/types";
 import { severityVariant } from "@/lib/severity";
 
+const TIMELINE_SEPARATOR = " — ";
+
 interface PostmortemDocumentProps {
   pm: Postmortem;
   completenessLabel?: string;
@@ -57,9 +59,9 @@ export function PostmortemDocument({
         <SectionLabel>Timeline</SectionLabel>
         <ul>
           {pm.timeline.map((entry, idx) => {
-            const splitIdx = entry.indexOf(" — ");
+            const splitIdx = entry.indexOf(TIMELINE_SEPARATOR);
             const time = splitIdx > 0 ? entry.slice(0, splitIdx) : entry;
-            const text = splitIdx > 0 ? entry.slice(splitIdx + 3) : "";
+            const text = splitIdx > 0 ? entry.slice(splitIdx + TIMELINE_SEPARATOR.length) : "";
             return (
               <li
                 key={idx}
