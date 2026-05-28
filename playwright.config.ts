@@ -24,8 +24,13 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      // Uses the system-installed Chrome via Playwright's `chrome` channel
+      // so we don't need to download the bundled Chromium (which was
+      // blocked by ECONNRESET on the Azure CDN in our dev environment).
+      // Switch to `chromium` after running `npx playwright install chromium`
+      // if you want the pinned bundled build.
+      name: "chrome",
+      use: { ...devices["Desktop Chrome"], channel: "chrome" },
     },
   ],
   webServer: [

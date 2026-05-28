@@ -35,3 +35,14 @@ npx playwright test --debug
   in a separate terminal if not already running.
 - `reuseExistingServer: true` means already-running dev servers are reused.
   If a stale server has a different `.env`, kill it first.
+
+## Browser
+
+Default: **system-installed Chrome** (`channel: "chrome"` in `playwright.config.ts`).
+This avoids the ~150 MB Playwright Chromium download, which was being
+blocked by ECONNRESET on the Azure CDN in our environment.
+
+If you'd rather use the pinned bundled Chromium build (more reproducible
+for CI), run `cd web && npx playwright install chromium` once, then change
+the project name in `playwright.config.ts` from `chrome` to `chromium` and
+remove the `channel: "chrome"` line.
