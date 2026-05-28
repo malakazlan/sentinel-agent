@@ -27,6 +27,7 @@ export default function PostmortemPage({ params }: { params: { id: string } }) {
             ? { label: `Validated · completeness ${data.completeness.score.toFixed(3)}` }
             : { label: "—" }
         }
+        incidentId={params.id}
       />
       <main className="mx-auto w-full max-w-[1180px] px-8 pb-16 pt-10">
         {isPending && <p className="text-text-secondary">Loading postmortem…</p>}

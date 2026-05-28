@@ -6,17 +6,23 @@ interface TopbarProps {
   active: "scenarios" | "console" | "postmortem";
   status?: { dot?: "ok" | "running" | "error"; label: string };
   context?: string;
+  incidentId?: string;
 }
 
-// Live console and Postmortem nav targets are placeholders (`#`) until a
-// per-incident routing pattern is decided. Active highlighting still works.
-const navLinks: { href: Route; label: string; key: "scenarios" | "console" | "postmortem" }[] = [
-  { href: "/" as Route, label: "Scenarios", key: "scenarios" },
-  { href: "#" as Route, label: "Live console", key: "console" },
-  { href: "#" as Route, label: "Postmortem", key: "postmortem" },
-];
+type NavLink = { href: Route; label: string; key: "scenarios" | "console" | "postmortem" };
 
-export function Topbar({ active, status, context }: TopbarProps) {
+function buildNavLinks(incidentId?: string): NavLink[] {
+  const links: NavLink[] = [{ href: "/" as Route, label: "Scenarios", key: "scenarios" }];
+  if (incidentId) {
+    const encoded = encodeURIComponent(incidentId);
+    links.push({ href: `/incidents/${encoded}` as Route, label: "Live console", key: "console" });
+    links.push({ href: `/incidents/${encoded}/postmortem` as Route, label: "Postmortem", key: "postmortem" });
+  }
+  return links;
+}
+
+export function Topbar({ active, status, context, incidentId }: TopbarProps) {
+  const navLinks = buildNavLinks(incidentId);
   return (
     <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-border bg-bg px-8">
       <div className="flex items-center gap-8">

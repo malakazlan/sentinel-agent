@@ -119,6 +119,7 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
             : { dot: "running", label: "Pipeline running" }
         }
         context={incidentStarted?.watched_project ?? ""}
+        incidentId={params.id}
       />
       <main className="mx-auto w-full max-w-[1180px] px-8 pb-16 pt-10">
         {/* Incident header */}
