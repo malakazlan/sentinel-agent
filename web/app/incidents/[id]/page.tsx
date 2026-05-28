@@ -223,11 +223,15 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
             <Button variant="secondary" disabled={!completed}>
               {completed ? "View Phoenix" : "Waiting for run to finish…"}
             </Button>
-            <Link href={`/incidents/${encodeURIComponent(params.id)}/postmortem` as Route}>
-              <Button variant="primary" disabled={!completed}>
-                {completed ? "View postmortem →" : "Pipeline running…"}
+            {completed ? (
+              <Link href={`/incidents/${encodeURIComponent(params.id)}/postmortem` as Route}>
+                <Button variant="primary">View postmortem →</Button>
+              </Link>
+            ) : (
+              <Button variant="primary" disabled>
+                Pipeline running…
               </Button>
-            </Link>
+            )}
           </div>
         </div>
       </main>
