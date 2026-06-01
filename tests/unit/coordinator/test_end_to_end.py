@@ -78,10 +78,26 @@ def _make_canned_stream(
 
 @pytest.mark.asyncio
 async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
-    """Happy path: 4 stages run, postmortem stage produces valid JSON."""
+    """Happy path: 4 stages + 1 critic stage (ADR-016 refinement loop).
+
+    The critic stream isn't mocked here; with the canned-stream fallback to
+    an empty generator, the critic stage produces no text, the extractor
+    returns None, and the loop breaks out — accepting the postmortem as-is.
+    The visible contract: 4 main stages plus exactly 1 critic_iteration_1.
+    """
     scenario = get_scenario("fraud-fp-burst")
     valid_pm = _valid_postmortem().model_dump()
     pm_text = "```json\n" + json.dumps(valid_pm) + "\n```"
+
+    # Critic returns an "accept" verdict so the loop terminates on the first
+    # iteration without a revision.
+    critic_text = (
+        '```json\n{"score": 0.9, "rubric_scores": {"completeness": 0.9, '
+        '"grounding": 0.9, "actionability": 0.9, "customer_impact": 0.9}, '
+        '"critique": "Postmortem is grounded and actionable; no revisions '
+        'required for this draft.", "gaps_by_section": {}, "accept": true}'
+        "\n```"
+    )
 
     fake = _make_canned_stream(
         {
@@ -89,6 +105,10 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
             "hypothesize the root cause": ("root_cause", "1. Prompt regression (confidence: high)"),
             "draft a remediation plan": ("remediation", '{"severity":"P1","confidence":"high"}'),
             "write the postmortem": ("postmortem", pm_text),
+            "Score this postmortem against the four-dimension rubric": (
+                "critic",
+                critic_text,
+            ),
         }
     )
 
@@ -96,12 +116,14 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
         result = await run_end_to_end_scenario(scenario)
 
     assert result.scenario_id == "fraud-fp-burst"
-    assert len(result.stages) == 4
+    # 4 main stages + 1 critic iteration (accepted on first pass)
+    assert len(result.stages) == 5
     assert [s.name for s in result.stages] == [
         "investigate",
         "root_cause",
         "remediation",
         "postmortem",
+        "critic_iteration_1",
     ]
     assert result.error is None
     assert result.succeeded is True

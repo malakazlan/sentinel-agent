@@ -287,3 +287,66 @@ POSTMORTEM_REQUIRED_SECTIONS: tuple[str, ...] = (
     "action_items",
     "lessons_learned",
 )
+
+
+# ── Phase 7 / Addition 4 / ADR-016 — CriticAgent output ───────────────────
+
+
+class CritiqueResult(BaseModel):
+    """Rubric-scored critique of a draft Postmortem.
+
+    Produced by ``CriticAgent`` after PostmortemAgent drafts. When ``score``
+    is below the configured threshold (default 0.85), the orchestrator
+    feeds ``critique`` + ``gaps_by_section`` back to PostmortemAgent for
+    one revision iteration. Max 2 iterations to bound cost.
+    """
+
+    score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Aggregate quality score on [0, 1]. >=0.85 = acceptable.",
+    )
+    rubric_scores: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Per-dimension scores (completeness, grounding, actionability, "
+            "customer_impact). Each in [0, 1]. The aggregate is computed by "
+            "the critic; consumers may inspect individual dimensions to "
+            "decide whether to escalate or accept."
+        ),
+    )
+    critique: str = Field(
+        ...,
+        min_length=20,
+        description=(
+            "Plain-language critique aimed at the PostmortemAgent for "
+            "revision. References specific sections by name and cites the "
+            "rubric dimension that failed."
+        ),
+    )
+    gaps_by_section: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Map of postmortem section name → one-line gap description. "
+            "Empty dict when no section gaps were identified (e.g. when "
+            "the critique is about cross-cutting issues like grounding)."
+        ),
+    )
+    accept: bool = Field(
+        ...,
+        description=(
+            "Whether the critic recommends accepting the postmortem as-is. "
+            "True iff score >= threshold. Set by the consumer based on the "
+            "configured threshold."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _rubric_scores_in_unit_interval(self) -> "CritiqueResult":
+        for dim, val in self.rubric_scores.items():
+            if not (0.0 <= val <= 1.0):
+                raise ValueError(
+                    f"rubric_scores[{dim!r}]={val} outside [0, 1]"
+                )
+        return self

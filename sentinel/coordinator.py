@@ -43,13 +43,18 @@ if TYPE_CHECKING:
 from google.adk.agents.readonly_context import ReadonlyContext
 
 from evals.completeness import CompletenessResult, completeness_score
+from sentinel.agents.critic import (
+    CRITIC_SCORE_THRESHOLD,
+    MAX_REFINEMENT_ITERATIONS,
+    critic,
+)
 from sentinel.agents.deploy_correlator import deploy_correlator
 from sentinel.agents.eval_runner import eval_runner
 from sentinel.agents.parallel_eval import parallel_eval_runner
 from sentinel.agents.postmortem import postmortem
 from sentinel.agents.remediation import remediation
 from sentinel.agents.root_cause import root_cause
-from sentinel.agents.schemas import Postmortem
+from sentinel.agents.schemas import CritiqueResult, Postmortem
 from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.events import (
     IncidentCompletedEvent,
@@ -202,6 +207,7 @@ coordinator = LlmAgent(
         remediation,
         postmortem,
         deploy_correlator,
+        critic,
     ],
     generate_content_config=_GENERATE_CONFIG,
     before_agent_callback=before_coordinator_callback,
@@ -452,6 +458,58 @@ def _extract_postmortem_json(text: str) -> Optional[dict]:
         return None
 
 
+def _extract_critique_json(text: str) -> Optional[dict]:
+    """Pull the CritiqueResult JSON object out of a Critic agent's final text.
+
+    Same shape as the postmortem extractor — fenced first, raw fallback.
+    Kept separate for readability and to make Phase 7 / ADR-016 changes
+    auditable in one place.
+    """
+    return _extract_postmortem_json(text)
+
+
+def _build_revision_prompt(
+    original_text: str,
+    critique: CritiqueResult,
+    scenario_id: str,
+) -> str:
+    """Compose the prompt that asks PostmortemAgent to revise based on critique.
+
+    Includes:
+    - the critic's score + per-dimension breakdown so the agent sees what it
+      failed on
+    - the original postmortem text (the agent's previous draft) so it has the
+      starting point
+    - explicit instructions to address each gap and re-emit the same JSON
+      shape
+
+    Bounded prompt length: we truncate the original text to 3000 chars to
+    keep token usage predictable across iterations.
+    """
+    truncated = original_text[:3000] + (
+        "\n…(truncated)" if len(original_text) > 3000 else ""
+    )
+    gaps_block = (
+        "\n".join(f"- {section}: {gap}" for section, gap in critique.gaps_by_section.items())
+        or "(no per-section gaps; see overall critique below)"
+    )
+    return (
+        f"The critic reviewed your previous draft postmortem for scenario "
+        f"`{scenario_id}` and scored it at **{critique.score:.2f}** "
+        f"(threshold {CRITIC_SCORE_THRESHOLD}). Per-dimension scores:\n"
+        + "".join(
+            f"- {dim}: {val:.2f}\n" for dim, val in critique.rubric_scores.items()
+        )
+        + f"\nPer-section gaps:\n{gaps_block}\n\n"
+        f"Critic's overall feedback:\n{critique.critique}\n\n"
+        f"Your previous draft (revise this):\n```json\n{truncated}\n```\n\n"
+        f"Address each gap above and re-emit a single JSON object inside a "
+        f"```json``` block per the original schema. Do not change "
+        f"`incident_id` or `severity`. Do not add new fields. Do not "
+        f"reduce the substantive content of any other section."
+    )
+
+
 async def run_end_to_end_scenario(
     scenario: "IncidentScenario",
     *,
@@ -610,6 +668,61 @@ async def run_end_to_end_scenario(
         # Lifecycle: postmortem_validated — only when extraction + Pydantic
         # validation + completeness scoring all succeeded.
         if result.postmortem is not None and result.completeness is not None:
+            # Phase 7 / ADR-016 — bounded refinement loop.
+            # If the critic scores the postmortem below threshold, request
+            # one revision and re-score. Hard cap at MAX_REFINEMENT_ITERATIONS
+            # iterations to bound Vertex spend on unfixable drafts.
+            current_pm_text = pm_stage.final_text
+            iterations_run = 0
+            while iterations_run < MAX_REFINEMENT_ITERATIONS:
+                critique_prompt = (
+                    "Score this postmortem against the four-dimension rubric "
+                    "(completeness, grounding, actionability, customer_impact) "
+                    "and emit a CritiqueResult JSON object per your prompt's "
+                    "output format. Do not call any tool. Postmortem under "
+                    f"review:\n```json\n{result.postmortem.model_dump_json()}\n```"
+                )
+                critic_stage = await _run_stage(
+                    f"critic_iteration_{iterations_run + 1}", critique_prompt
+                )
+                result.stages.append(critic_stage)
+                critique_dict = _extract_critique_json(critic_stage.final_text)
+                if critique_dict is None:
+                    # Critic produced unparseable output; accept the postmortem
+                    # rather than loop forever. Surfaces in the trace tree as
+                    # a critic stage without a downstream revision.
+                    break
+                try:
+                    critique = CritiqueResult(**critique_dict)
+                except Exception:
+                    # Schema failure — same fallback.
+                    break
+                if critique.accept or critique.score >= CRITIC_SCORE_THRESHOLD:
+                    break
+                # Below threshold and budget remaining → revise.
+                if iterations_run + 1 >= MAX_REFINEMENT_ITERATIONS:
+                    break
+                revision_prompt = _build_revision_prompt(
+                    original_text=current_pm_text,
+                    critique=critique,
+                    scenario_id=scenario.id,
+                )
+                rev_stage = await _run_stage(
+                    f"postmortem_revision_{iterations_run + 1}", revision_prompt
+                )
+                result.stages.append(rev_stage)
+                # Re-parse + re-validate the revised postmortem. On failure
+                # the previous validated postmortem is retained.
+                revised_dict = _extract_postmortem_json(rev_stage.final_text)
+                if revised_dict is not None:
+                    try:
+                        result.postmortem = Postmortem(**revised_dict)
+                        result.completeness = completeness_score(result.postmortem)
+                        current_pm_text = rev_stage.final_text
+                    except Exception:
+                        pass
+                iterations_run += 1
+
             await emit(
                 PostmortemValidatedEvent(
                     incident_id=emitted_incident_id,
