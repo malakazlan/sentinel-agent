@@ -21,11 +21,15 @@ test("fraud-fp-burst pipeline produces a validated postmortem", async ({ page })
   // 3) Wait for redirect to /incidents/<id> (the run page POSTs then redirects)
   await page.waitForURL(/\/incidents\/fraud-fp-spike-/, { timeout: 30_000 });
 
-  // 4) Live console header renders
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("False-positive", {
+  // 4) Live console header renders with the actual scenario title from SSE.
+  // Backend emits the scenario.title verbatim (e.g. "Fraud detection — false-positive burst");
+  // match case-insensitively so the test isn't brittle to backend-side copy edits.
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(/false-positive/i, {
     timeout: 60_000,
   });
-  await expect(page.getByText(/Pipeline running|Pipeline finished/)).toBeVisible();
+  // Matches both the topbar status pill and the disabled CTA button when running —
+  // first() scopes to whichever Playwright resolves first (topbar in DOM order).
+  await expect(page.getByText(/Pipeline running|Pipeline finished/).first()).toBeVisible();
 
   // 5) Stepper shows Coordinator done within first minute
   await expect(page.locator("text=Coordinator").first()).toBeVisible({ timeout: 60_000 });
