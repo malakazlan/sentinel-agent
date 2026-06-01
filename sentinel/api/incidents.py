@@ -209,6 +209,10 @@ async def get_incident(incident_id: str) -> Any:
         "scenario_id": result.scenario_id,
         "succeeded": result.succeeded,
         "total_latency_ms": result.total_latency_ms,
+        # Error string from the coordinator's internal capture (seed/stage
+        # failures that don't re-raise). Distinct from state.failed_with
+        # which is set only when the runner's outer except fires.
+        "error": result.error,
         "postmortem": result.postmortem.model_dump() if result.postmortem else None,
         "completeness": (
             {"score": result.completeness.score, "label": result.completeness.label}
