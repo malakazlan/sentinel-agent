@@ -44,6 +44,7 @@ from google.adk.agents.readonly_context import ReadonlyContext
 
 from evals.completeness import CompletenessResult, completeness_score
 from sentinel.agents.eval_runner import eval_runner
+from sentinel.agents.parallel_eval import parallel_eval_runner
 from sentinel.agents.postmortem import postmortem
 from sentinel.agents.remediation import remediation
 from sentinel.agents.root_cause import root_cause
@@ -182,15 +183,24 @@ coordinator = LlmAgent(
     model=COORDINATOR_MODEL,
     instruction=_coordinator_instruction,
     description=(
-        "Sentinel root agent — full 5-agent topology. Self-introspects via "
-        "Phoenix MCP before every invocation and routes to one of five "
-        "sub-agents (TraceAnalyzer, EvalRunner, RootCause, Remediation, "
-        "Postmortem) or to a direct tool call, depending on whether the user "
-        "wants statistical description, quality evaluation, causal hypotheses, "
-        "a remediation plan, a postmortem RCA, or a quick lookup."
+        "Sentinel root agent — full topology with single-suite EvalRunner plus "
+        "the Phase 7 ParallelEvalRunner (4-way fan-out). Self-introspects via "
+        "Phoenix MCP before every invocation and routes to one of six "
+        "sub-agents (TraceAnalyzer, EvalRunner, ParallelEvalRunner, RootCause, "
+        "Remediation, Postmortem) or to a direct tool call, depending on "
+        "whether the user wants statistical description, single-suite eval, a "
+        "full eval fan-out, causal hypotheses, a remediation plan, a "
+        "postmortem RCA, or a quick lookup."
     ),
     tools=[get_recent_traces, make_phoenix_mcp_toolset()],
-    sub_agents=[trace_analyzer, eval_runner, root_cause, remediation, postmortem],
+    sub_agents=[
+        trace_analyzer,
+        eval_runner,
+        parallel_eval_runner,
+        root_cause,
+        remediation,
+        postmortem,
+    ],
     generate_content_config=_GENERATE_CONFIG,
     before_agent_callback=before_coordinator_callback,
     # Order matters: enforce_first_route may short-circuit; counter must come
