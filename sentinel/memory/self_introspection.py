@@ -28,6 +28,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.mcp_tool import McpToolset
 
 from sentinel.memory.briefing import PriorContextBriefing
+from sentinel.memory.recall import recall_similar_incidents
 from sentinel.observability.phoenix_mcp import make_phoenix_mcp_toolset
 
 _logger = logging.getLogger(__name__)
@@ -81,7 +82,9 @@ def _get_mcp() -> McpToolset:
     return _mcp_toolset
 
 
-async def synthesize_prior_context() -> PriorContextBriefing:
+async def synthesize_prior_context(
+    alert_payload: Optional[str] = None,
+) -> PriorContextBriefing:
     """Return a typed directive briefing for the Coordinator's next turn.
 
     Queries Phoenix MCP (``list-traces`` + ``get-span-annotations``), applies
@@ -100,10 +103,21 @@ async def synthesize_prior_context() -> PriorContextBriefing:
     - ``skip_routes`` left empty by default — capability preserved for true
       redundancy but not the demo's headline mechanism.
 
+    Phase 7 / ADR-013 — when ``alert_payload`` is provided, also queries the
+    local incident memory store for similar past incidents and attaches the
+    top-K matches to ``similar_past_incidents``. Failures here are silent
+    (memory recall degrades to empty list, not exception).
+
     Honors ``briefing_override`` for the demo and unit-test paths.
+
+    Args:
+        alert_payload: optional raw alert/initial-prompt text. When provided
+            and the memory store is non-empty, the synthesizer populates
+            ``similar_past_incidents`` on the returned briefing.
     """
     if _briefing_override is not None:
         return _briefing_override
+    similar = _safe_recall(alert_payload)
     try:
         mcp = _get_mcp()
         tools = await mcp.get_tools()
@@ -121,6 +135,7 @@ async def synthesize_prior_context() -> PriorContextBriefing:
             return PriorContextBriefing(
                 cold_start=True,
                 stats={"n_total": 0, "lookback_hours": _LOOKBACK_HOURS_DEFAULT},
+                similar_past_incidents=similar,
             )
 
         span_ids = [
@@ -139,14 +154,29 @@ async def synthesize_prior_context() -> PriorContextBriefing:
             )
             annotations = _extract_annotations(anns_result)
 
-        return _derive_briefing(root_spans, annotations)
+        briefing = _derive_briefing(root_spans, annotations)
+        # Attach precedent results computed before the MCP query.
+        # Pydantic models are immutable by default; emit a copy.
+        return briefing.model_copy(update={"similar_past_incidents": similar})
     except Exception as exc:
         _logger.warning("self-introspection failed: %s", exc, exc_info=True)
         return PriorContextBriefing(
             cold_start=True,
             stats={"introspection_error": 1},
             evidence={"cold_start": f"Phoenix MCP query failed: {type(exc).__name__}"},
+            similar_past_incidents=similar,
         )
+
+
+def _safe_recall(alert_payload: Optional[str]) -> list:
+    """Recall similar past incidents; never raises. Empty list on any failure."""
+    if not alert_payload:
+        return []
+    try:
+        return recall_similar_incidents(alert_payload)
+    except Exception as exc:  # noqa: BLE001 — best-effort recall
+        _logger.warning("recall_similar_incidents failed: %s", exc, exc_info=True)
+        return []
 
 
 async def before_coordinator_callback(
@@ -158,8 +188,14 @@ async def before_coordinator_callback(
     the typed briefing in callback state under ``"prior_context_briefing"``
     so the Coordinator's instruction provider can render the directive
     block. Returns ``None`` so the agent runs normally (no short-circuit).
+
+    Phase 7 / ADR-013 — reads an optional ``alert_payload`` from state so
+    upstream callers (the end-to-end scenario runner) can provide it
+    explicitly. When absent, memory recall is skipped (briefing's
+    ``similar_past_incidents`` stays empty).
     """
-    briefing = await synthesize_prior_context()
+    alert_payload: Optional[str] = callback_context.state.get("alert_payload")
+    briefing = await synthesize_prior_context(alert_payload=alert_payload)
     callback_context.state["prior_context_briefing"] = briefing
     return None
 

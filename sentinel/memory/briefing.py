@@ -13,6 +13,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from sentinel.memory.incident_memory import SimilarIncident
+
 # Closed set of routes the Coordinator can take. Anything outside this
 # enumeration is a bug.
 Route = Literal[
@@ -88,6 +90,21 @@ class PriorContextBriefing(BaseModel):
             "Default time window for get_recent_traces, derived from "
             "observed volume. Widen when activity is low; keep narrow when "
             "high. Capped at 1 week (168h)."
+        ),
+    )
+
+    # ── PRECEDENT (Phase 7 / ADR-013) ─────────────────────────────────────
+    similar_past_incidents: list[SimilarIncident] = Field(
+        default_factory=list,
+        description=(
+            "Top-K past incidents most similar to the current alert, "
+            "retrieved from the local incident memory store via cosine "
+            "similarity on the embedded alert text. Empty when the store is "
+            "empty or no matches exceed the similarity floor. The Coordinator "
+            "consumes this list as additional precedent context — e.g. 'this "
+            "looks like incident X from last week; that one was resolved by "
+            "Y'. ADR-013 documents the Vertex-AI-Vector-Search production "
+            "upgrade path."
         ),
     )
 

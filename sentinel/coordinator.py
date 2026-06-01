@@ -617,6 +617,27 @@ async def run_end_to_end_scenario(
                     postmortem_json=result.postmortem.model_dump_json(),
                 )
             )
+            # Phase 7 / ADR-013 — persist the completed incident to the local
+            # memory store so future runs can recall it. Best-effort: an
+            # embedding failure logs a warning and skips the write rather
+            # than failing the pipeline.
+            try:
+                from sentinel.memory.recall import remember_incident
+
+                remember_incident(
+                    incident_id=emitted_incident_id,
+                    scenario_id=scenario.id,
+                    title=result.postmortem.title,
+                    postmortem_summary=result.postmortem.summary,
+                    root_cause=result.postmortem.root_cause,
+                    remediation_summary=(
+                        result.postmortem.resolution
+                        if result.postmortem.resolution
+                        else ""
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — never block on memory write
+                pass
 
         result.total_latency_ms = _elapsed_ms()
         await emit(

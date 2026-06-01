@@ -34,3 +34,6 @@ test-results/
 playwright-report/
 web/tests-e2e/.auth/
 node_modules/
+
+# Phase 7 / ADR-013 — local incident memory store (machine-local; not public)
+data/memory/
