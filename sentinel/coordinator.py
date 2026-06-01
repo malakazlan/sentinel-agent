@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 from google.adk.agents.readonly_context import ReadonlyContext
 
 from evals.completeness import CompletenessResult, completeness_score
+from sentinel.agents.deploy_correlator import deploy_correlator
 from sentinel.agents.eval_runner import eval_runner
 from sentinel.agents.parallel_eval import parallel_eval_runner
 from sentinel.agents.postmortem import postmortem
@@ -200,6 +201,7 @@ coordinator = LlmAgent(
         root_cause,
         remediation,
         postmortem,
+        deploy_correlator,
     ],
     generate_content_config=_GENERATE_CONFIG,
     before_agent_callback=before_coordinator_callback,
