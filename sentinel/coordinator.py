@@ -55,6 +55,7 @@ from sentinel.agents.postmortem import postmortem
 from sentinel.agents.remediation import remediation
 from sentinel.agents.root_cause import root_cause
 from sentinel.agents.schemas import CritiqueResult, Postmortem
+from sentinel.agents.slack_announcer import slack_announcer
 from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.events import (
     IncidentCompletedEvent,
@@ -208,6 +209,7 @@ coordinator = LlmAgent(
         postmortem,
         deploy_correlator,
         critic,
+        slack_announcer,
     ],
     generate_content_config=_GENERATE_CONFIG,
     before_agent_callback=before_coordinator_callback,
@@ -468,6 +470,55 @@ def _extract_critique_json(text: str) -> Optional[dict]:
     return _extract_postmortem_json(text)
 
 
+async def _maybe_announce_to_slack(
+    event_type: str,
+    payload: dict,
+    result: "EndToEndResult",
+) -> None:
+    """Post an incident lifecycle event to Slack via SlackAnnouncerAgent.
+
+    No-op unless ``SENTINEL_SLACK_ENABLED=1`` is set in env. The actual
+    post is a one-stage Coordinator turn whose routing description match
+    sends it to ``slack_announcer``. The agent reads the payload from the
+    user message and posts via the Slack MCP tool.
+
+    On any failure (slack_announcer unavailable, MCP timeout, token missing)
+    we log and continue — Slack comms should NEVER block the incident
+    pipeline from completing.
+
+    Args:
+        event_type: one of ``incident_started``, ``postmortem_validated``,
+            ``incident_failed``. Drives the message template in the agent
+            prompt.
+        payload: structured event data (incident_id, severity, title, ...).
+            Serialized as JSON in the stage prompt.
+        result: the running ``EndToEndResult``. We append the stage to its
+            ``stages`` list so the slack post is visible in the trace tree.
+    """
+    if os.environ.get("SENTINEL_SLACK_ENABLED", "0") not in ("1", "true", "TRUE"):
+        return
+    prompt = (
+        f"Post the following `{event_type}` event to Slack using the "
+        f"slack_post_message tool. Use the channel ID from the env var "
+        f"SENTINEL_SLACK_CHANNEL_ID. Event payload:\n"
+        f"```json\n{json.dumps(payload, default=str)}\n```"
+    )
+    try:
+        stage = await _run_stage(f"slack_{event_type}", prompt)
+        result.stages.append(stage)
+    except Exception as exc:  # noqa: BLE001 — comms never block pipeline
+        _logger_for_slack().warning(
+            "Slack announce for %s failed: %s", event_type, exc
+        )
+
+
+def _logger_for_slack():
+    """Lazy logger to avoid a top-level import cycle if logging is configured later."""
+    import logging
+
+    return logging.getLogger(__name__)
+
+
 def _build_revision_prompt(
     original_text: str,
     critique: CritiqueResult,
@@ -573,6 +624,19 @@ async def run_end_to_end_scenario(
                 title=scenario.title,
                 watched_project=scenario.watched_project,
             )
+        )
+        # Phase 7 / ADR-015 reversal — Slack announce, no-op when
+        # SENTINEL_SLACK_ENABLED is unset.
+        await _maybe_announce_to_slack(
+            "incident_started",
+            {
+                "incident_id": emitted_incident_id,
+                "scenario_id": scenario.id,
+                "severity": scenario.severity,
+                "title": scenario.title,
+                "watched_project": scenario.watched_project,
+            },
+            result,
         )
 
         # Step 0 — seed Phoenix with realistic watched-system traces so the
@@ -731,6 +795,20 @@ async def run_end_to_end_scenario(
                     completeness_label=result.completeness.label,
                     postmortem_json=result.postmortem.model_dump_json(),
                 )
+            )
+            # Phase 7 / ADR-015 reversal — Slack post the validated postmortem.
+            # No-op when SENTINEL_SLACK_ENABLED is unset.
+            await _maybe_announce_to_slack(
+                "postmortem_validated",
+                {
+                    "incident_id": emitted_incident_id,
+                    "scenario_id": scenario.id,
+                    "severity": result.postmortem.severity,
+                    "pm_title": result.postmortem.title,
+                    "completeness_score": result.completeness.score,
+                    "root_cause_one_line": result.postmortem.root_cause[:240],
+                },
+                result,
             )
             # Phase 7 / ADR-013 — persist the completed incident to the local
             # memory store so future runs can recall it. Best-effort: an
