@@ -58,11 +58,13 @@ from sentinel.agents.schemas import CritiqueResult, Postmortem
 from sentinel.agents.slack_announcer import slack_announcer
 from sentinel.agents.trace_analyzer import trace_analyzer
 from sentinel.events import (
+    BriefingResolvedEvent,
     IncidentCompletedEvent,
     IncidentFailedEvent,
     IncidentStartedEvent,
     PostmortemValidatedEvent,
     SeedCompletedEvent,
+    SimilarIncidentSummary,
     StageCompletedEvent,
     StageStartedEvent,
 )
@@ -719,6 +721,48 @@ async def run_end_to_end_scenario(
         # synthesizer so the per-turn briefing recalls similar past
         # incidents. Without this thread-through the RAG layer is silent.
         scenario_alert_payload = scenario.initial_prompt()
+
+        # Phase 7 — resolve the briefing once up front and emit it on the
+        # SSE wire so the UI can render the "Learned routing" callout, the
+        # round-trips metric, and the similar-past-incidents list LIVE
+        # instead of as hardcoded placeholders. Best-effort: a synthesis
+        # failure logs and emits a cold-start placeholder; the per-stage
+        # synthesizer still runs inside `_run_stage` for actual routing.
+        try:
+            from sentinel.memory.self_introspection import (
+                synthesize_prior_context,
+            )
+
+            briefing = await synthesize_prior_context(
+                alert_payload=scenario_alert_payload
+            )
+        except Exception as exc:  # noqa: BLE001 — UI-only path; degrade silently
+            briefing = PriorContextBriefing(
+                cold_start=True,
+                evidence={"cold_start": f"briefing synthesis failed: {type(exc).__name__}"},
+            )
+        await emit(
+            BriefingResolvedEvent(
+                incident_id=emitted_incident_id,
+                elapsed_ms=_elapsed_ms(),
+                cold_start=briefing.cold_start,
+                first_route=briefing.first_route,
+                skip_routes=list(briefing.skip_routes),
+                must_eval_after=briefing.must_eval_after,
+                default_hours_back=briefing.default_hours_back,
+                similar_past_incidents=[
+                    SimilarIncidentSummary(
+                        incident_id=s.incident_id,
+                        scenario_id=s.scenario_id,
+                        title=s.title,
+                        similarity=s.similarity,
+                    )
+                    for s in briefing.similar_past_incidents
+                ],
+                evidence=dict(briefing.evidence),
+                stats={k: int(v) for k, v in briefing.stats.items()},
+            )
+        )
 
         # Point sub-agent tool calls at the watched project for the duration
         # of the pipeline. Self-introspection (via the synthesizer's hardcoded

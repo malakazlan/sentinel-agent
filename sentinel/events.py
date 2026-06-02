@@ -29,7 +29,7 @@ Or on error at any point:
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -60,6 +60,47 @@ class IncidentStartedEvent(_EventBase):
     severity: Severity
     title: str
     watched_project: str
+
+
+class SimilarIncidentSummary(BaseModel):
+    """One past incident the briefing recalled, in the wire-compact shape.
+
+    Phase 7 / ADR-013 — surfaced on the SSE protocol so the frontend can
+    render the "Similar past incidents" section under the learned-routing
+    callout. Mirrors ``sentinel.memory.incident_memory.SimilarIncident``
+    minus the long-form fields that don't belong in a streaming event.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    incident_id: str
+    scenario_id: str
+    title: str = Field(..., max_length=400)
+    similarity: float = Field(..., ge=0.0, le=1.0)
+
+
+class BriefingResolvedEvent(_EventBase):
+    """The Coordinator's self-introspection briefing for this incident.
+
+    Phase 7 — emitted by ``run_end_to_end_scenario`` once after the seed
+    step, before any agent stage runs. Carries the typed directives the
+    Coordinator will honor (``first_route``, ``skip_routes``,
+    ``must_eval_after``, ``default_hours_back``), the stats that triggered
+    them, and the top-K similar past incidents from the RAG layer.
+
+    The frontend renders this as: the "Learned routing" callout, the
+    "Round-trips" metric, and a "Similar past incidents" precedent list.
+    """
+
+    type: Literal["briefing_resolved"] = "briefing_resolved"
+    cold_start: bool
+    first_route: Optional[str] = None
+    skip_routes: list[str] = Field(default_factory=list)
+    must_eval_after: bool = False
+    default_hours_back: int = Field(..., ge=1, le=168)
+    similar_past_incidents: list[SimilarIncidentSummary] = Field(default_factory=list)
+    evidence: dict[str, str] = Field(default_factory=dict)
+    stats: dict[str, int] = Field(default_factory=dict)
 
 
 class SeedCompletedEvent(_EventBase):
@@ -104,6 +145,7 @@ class IncidentFailedEvent(_EventBase):
 _EVENT_UNION = Annotated[
     Union[
         IncidentStartedEvent,
+        BriefingResolvedEvent,
         SeedCompletedEvent,
         StageStartedEvent,
         StageCompletedEvent,

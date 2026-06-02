@@ -91,6 +91,9 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
   const incidentStarted = stream.events.find(
     (e): e is Extract<IncidentEvent, { type: "incident_started" }> => e.type === "incident_started"
   );
+  const briefing = stream.events.find(
+    (e): e is Extract<IncidentEvent, { type: "briefing_resolved" }> => e.type === "briefing_resolved"
+  );
   const seedCompleted = stream.events.find(
     (e): e is Extract<IncidentEvent, { type: "seed_completed" }> => e.type === "seed_completed"
   );
@@ -112,6 +115,59 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
   const errorRate = seedCompleted
     ? ((seedCompleted.n_error / Math.max(1, seedCompleted.n_error + seedCompleted.n_ok)) * 100).toFixed(1)
     : "—";
+
+  // ── Phase 7 / ADR-013: derive live briefing-driven UI from the wire ──
+  //
+  // The Coordinator emits ``briefing_resolved`` once before any stage runs.
+  // Three places on this page hydrate from it:
+  //   1. "Round-trips" metric  — cold start runs the full 6-stage chain;
+  //      a warm briefing with ``skip_routes`` shaves stages off.
+  //   2. "Learned routing" callout — first_route + skip_routes + evidence,
+  //      or a cold-start fallback message.
+  //   3. "Similar past incidents" precedent list — only rendered when the
+  //      RAG layer returned non-empty matches.
+  const totalPipelineStages = STAGES_IN_ORDER.length;  // 6 (investigate → postmortem)
+  const roundTripsValue = briefing
+    ? `${totalPipelineStages - briefing.skip_routes.length}`
+    : "—";
+  const roundTripsDelta =
+    briefing && !briefing.cold_start && briefing.skip_routes.length > 0
+      ? {
+          value: `−${briefing.skip_routes.length} vs cold (${totalPipelineStages})`,
+          positive: true,
+        }
+      : briefing && briefing.cold_start
+      ? { value: "cold start", positive: false }
+      : undefined;
+
+  const routingBody = briefing
+    ? briefing.cold_start
+      ? `Cold start — no prior context indexed. Running the full default chain (${totalPipelineStages} stages).`
+      : (() => {
+          const parts: string[] = [];
+          if (briefing.first_route) {
+            const reason =
+              briefing.evidence["first_route"] ?? "matches the dominant pattern from prior runs";
+            parts.push(`Open with ${briefing.first_route} — ${reason}.`);
+          }
+          if (briefing.skip_routes.length > 0) {
+            const skipReason =
+              briefing.evidence["skip_routes"] ?? "redundant given prior coverage";
+            parts.push(`Skip ${briefing.skip_routes.join(", ")} — ${skipReason}.`);
+          }
+          if (briefing.must_eval_after) {
+            parts.push("Force an eval pass before sign-off.");
+          }
+          return parts.length > 0
+            ? parts.join(" ")
+            : "Warm briefing returned no directive — running default chain.";
+        })()
+    : "Awaiting briefing…";
+  const routingSource = briefing
+    ? `Source: Phoenix MCP · last ${briefing.default_hours_back}h · ` +
+      `${briefing.stats["n_total"] ?? 0} prior incidents · ` +
+      `${briefing.similar_past_incidents.length} similar`
+    : "Source: Phoenix MCP";
 
   return (
     <div className="min-h-screen">
@@ -151,7 +207,11 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
 
         {/* Metric row */}
         <div className="mb-8 grid grid-cols-4 gap-4">
-          <MetricCard label="Round-trips" value="2" delta={{ value: "−1 vs cold (3)", positive: true }} />
+          <MetricCard
+            label="Round-trips"
+            value={roundTripsValue}
+            {...(roundTripsDelta ? { delta: roundTripsDelta } : {})}
+          />
           <MetricCard label="Traces analyzed" value={tracesValue} {...(tracesSub ? { sub: tracesSub } : {})} />
           <MetricCard label="Error rate" value={`${errorRate}%`} sub="baseline 7.2%" />
           <MetricCard
@@ -173,12 +233,48 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
             {/* Stepper split with RoutingCallout interleaved between Coordinator and the rest. */}
             <AgentStepper steps={steps.slice(0, 1)} />
             <RoutingCallout
-              body="Skip eval_runner on first turn — hallucination eval is no-op when traces lack tool calls (observed in 12 of 17 prior runs)."
-              source="Source: Phoenix MCP · runs of last 30 days · confidence high"
+              label={briefing?.cold_start ? "Cold start" : "Learned routing"}
+              body={routingBody}
+              source={routingSource}
             />
             <AgentStepper steps={steps.slice(1)} />
           </div>
         </section>
+
+        {/* Similar past incidents — only rendered when the RAG layer found matches. */}
+        {briefing && briefing.similar_past_incidents.length > 0 && (
+          <section className="mb-8">
+            <div className="mb-3.5 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-text-tertiary">
+                Similar past incidents
+              </span>
+              <span className="text-xs text-text-tertiary">
+                top {briefing.similar_past_incidents.length} · cosine similarity over
+                Vertex text-embedding-004
+              </span>
+            </div>
+            <div className="rounded-md border border-border bg-bg">
+              <ul className="divide-y divide-border">
+                {briefing.similar_past_incidents.map((sim) => (
+                  <li
+                    key={sim.incident_id}
+                    className="flex items-center justify-between gap-4 px-5 py-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-[13px] text-text">{sim.title}</div>
+                      <div className="mt-0.5 font-mono text-xs text-text-tertiary">
+                        {sim.scenario_id} · {sim.incident_id}
+                      </div>
+                    </div>
+                    <div className="shrink-0 font-mono text-[13px] text-text-secondary tabular-nums">
+                      {sim.similarity.toFixed(3)}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
 
         {/* Determinism — static demo data; faithful to the design */}
         <section className="mb-10">

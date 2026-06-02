@@ -25,6 +25,37 @@ export interface IncidentStartedEvent {
   watched_project: string;
 }
 
+/**
+ * One past incident the briefing recalled (wire-compact shape).
+ * Phase 7 / ADR-013. Mirrors sentinel.events.SimilarIncidentSummary.
+ */
+export interface SimilarIncidentSummary {
+  incident_id: string;
+  scenario_id: string;
+  title: string;
+  similarity: number;
+}
+
+/**
+ * Coordinator's self-introspection briefing — emitted once per incident
+ * before any agent stage runs. Carries the directives the Coordinator
+ * will honor and the precedent list the UI renders.
+ * Phase 7 / ADR-013.
+ */
+export interface BriefingResolvedEvent {
+  type: "briefing_resolved";
+  incident_id: string;
+  elapsed_ms: number;
+  cold_start: boolean;
+  first_route: string | null;
+  skip_routes: string[];
+  must_eval_after: boolean;
+  default_hours_back: number;
+  similar_past_incidents: SimilarIncidentSummary[];
+  evidence: Record<string, string>;
+  stats: Record<string, number>;
+}
+
 export interface SeedCompletedEvent {
   type: "seed_completed";
   incident_id: string;
@@ -78,6 +109,7 @@ export interface IncidentFailedEvent {
 
 export type IncidentEvent =
   | IncidentStartedEvent
+  | BriefingResolvedEvent
   | SeedCompletedEvent
   | StageStartedEvent
   | StageCompletedEvent
