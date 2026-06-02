@@ -13,8 +13,9 @@ Public surface:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Union
 
 from sentinel.memory.embedder import embed_text
 from sentinel.memory.incident_memory import (
@@ -25,9 +26,32 @@ from sentinel.memory.incident_memory import (
 
 _logger = logging.getLogger(__name__)
 
+# Type alias for either backend — both expose the same public methods.
+_StoreT = Union[IncidentMemoryStore, "VectorSearchMemoryStore"]
 
-def _shared_store() -> IncidentMemoryStore:
-    """Lazy singleton for the default-path store."""
+
+def _shared_store() -> _StoreT:
+    """Resolve the memory backend per ``SENTINEL_MEMORY_BACKEND``.
+
+    - ``vector_search`` → ``VectorSearchMemoryStore.from_config()``. If
+      the config is missing or unreachable, logs a warning and falls back
+      to local — the recall path never crashes the Coordinator.
+    - ``local`` (default) → ``IncidentMemoryStore`` (JSONL).
+    """
+    backend = os.environ.get("SENTINEL_MEMORY_BACKEND", "local").lower()
+    if backend == "vector_search":
+        try:
+            from sentinel.memory.vector_search_store import (
+                VectorSearchMemoryStore,
+                VectorSearchUnavailable,
+            )
+
+            return VectorSearchMemoryStore.from_config()
+        except Exception as exc:  # noqa: BLE001 — falling back is the point
+            _logger.warning(
+                "Vector Search backend unavailable (%s); falling back to local store.",
+                exc,
+            )
     return IncidentMemoryStore()
 
 
@@ -35,7 +59,7 @@ def recall_similar_incidents(
     alert_payload: str,
     top_k: int = 3,
     min_similarity: float = 0.5,
-    store: Optional[IncidentMemoryStore] = None,
+    store: Optional[_StoreT] = None,
 ) -> list[SimilarIncident]:
     """Return up to ``top_k`` past incidents similar to the current alert.
 
@@ -59,9 +83,13 @@ def recall_similar_incidents(
     if not embedding:
         return []
     target = store or _shared_store()
-    return target.top_k_similar(
-        embedding, top_k=top_k, min_similarity=min_similarity
-    )
+    try:
+        return target.top_k_similar(
+            embedding, top_k=top_k, min_similarity=min_similarity
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade to empty rather than crash
+        _logger.warning("recall query failed (%s); returning empty", exc)
+        return []
 
 
 def remember_incident(
@@ -71,7 +99,7 @@ def remember_incident(
     postmortem_summary: str,
     root_cause: str,
     remediation_summary: str = "",
-    store: Optional[IncidentMemoryStore] = None,
+    store: Optional[_StoreT] = None,
 ) -> bool:
     """Embed a completed incident and append it to the local store.
 
@@ -104,5 +132,11 @@ def remember_incident(
         embedding=embedding,
     )
     target = store or _shared_store()
-    target.append(record)
+    try:
+        target.append(record)
+    except Exception as exc:  # noqa: BLE001 — never block on memory write
+        _logger.warning(
+            "remember_incident: append failed for %s (%s)", incident_id, exc
+        )
+        return False
     return True
