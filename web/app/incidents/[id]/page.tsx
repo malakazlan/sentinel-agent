@@ -16,6 +16,10 @@ import type { IncidentEvent, StageName } from "@/lib/types";
 
 const STAGES_IN_ORDER: { stage: StageName; name: string; model: string }[] = [
   { stage: "investigate", name: "Trace analyzer", model: "gemini-3.1-flash-lite" },
+  // Phase 7 / ADR-012 — ParallelEvalRunner fan-out over 4 code-eval suites.
+  { stage: "eval_fanout", name: "Eval fan-out", model: "ParallelAgent · 4 suites" },
+  // Phase 7 / ADR-014 — DeployCorrelator queries GitHub MCP for commits/PRs.
+  { stage: "deploy_correlation", name: "Deploy correlator", model: "gemini-3.1-flash-lite · GitHub MCP" },
   { stage: "root_cause", name: "Root cause", model: "gemini-3.1-pro" },
   { stage: "remediation", name: "Remediation", model: "gemini-3.1-pro" },
   { stage: "postmortem", name: "Postmortem", model: "gemini-3.1-flash-lite" },

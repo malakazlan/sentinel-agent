@@ -166,7 +166,8 @@ async def test_wrapper_uses_synthesized_briefing_when_no_override_active() -> No
     """When no override is pinned, wrapper calls synthesize_prior_context once."""
     synthesized = PriorContextBriefing(must_eval_after=False)
 
-    async def fake_synthesize() -> PriorContextBriefing:
+    async def fake_synthesize(**_kwargs) -> PriorContextBriefing:
+        # Phase 7 / ADR-013 — wrapper now passes alert_payload kwarg.
         return synthesized
 
     async def fake_stream(user_text: str):

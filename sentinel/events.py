@@ -34,7 +34,14 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
-StageName = Literal["investigate", "root_cause", "remediation", "postmortem"]
+StageName = Literal[
+    "investigate",
+    "eval_fanout",  # Phase 7 / ADR-012 — ParallelEvalRunner fan-out stage
+    "deploy_correlation",  # Phase 7 / ADR-014 — DeployCorrelator stage
+    "root_cause",
+    "remediation",
+    "postmortem",
+]
 Severity = Literal["P0", "P1", "P2", "P3"]
 
 

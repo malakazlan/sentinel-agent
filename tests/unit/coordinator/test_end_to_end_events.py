@@ -33,7 +33,8 @@ def _stub_stage_factory() -> Any:
     the test can verify ordering against the emitted events.
     """
 
-    async def fake_run_stage(name: str, prompt: str) -> StageResult:
+    async def fake_run_stage(name: str, prompt: str, **_kwargs) -> StageResult:
+        # Accepts any kwargs (alert_payload) the orchestrator now threads through.
         return StageResult(
             name=name,
             prompt=prompt,
@@ -96,12 +97,21 @@ async def test_on_event_callback_fires_lifecycle_in_order() -> None:
     assert events[1].n_ok == 30
     assert events[1].n_error == 12
 
-    # 4 stages × (started, completed) = 8 stage events, in order.
+    # 6 main stages × (started, completed) = 12 stage events, in order.
+    # The chain is now investigate → eval_fanout → deploy_correlation →
+    # root_cause → remediation → postmortem (Phase 7 / ADR-012 + ADR-014).
     stage_events = [
         e for e in events if isinstance(e, (StageStartedEvent, StageCompletedEvent))
     ]
-    assert len(stage_events) == 8
-    expected_stages = ["investigate", "root_cause", "remediation", "postmortem"]
+    assert len(stage_events) == 12
+    expected_stages = [
+        "investigate",
+        "eval_fanout",
+        "deploy_correlation",
+        "root_cause",
+        "remediation",
+        "postmortem",
+    ]
     for i, stage in enumerate(expected_stages):
         assert isinstance(stage_events[i * 2], StageStartedEvent)
         assert stage_events[i * 2].stage == stage
@@ -180,9 +190,12 @@ async def test_no_callback_means_no_emission_no_crash() -> None:
         scenario = get_scenario("fraud-fp-burst")
         result = await run_end_to_end_scenario(scenario)  # no on_event
         assert result is not None
-        # Four stages still ran.
+        # Six main stages now run (Phase 7 / ADR-012 + ADR-014 added
+        # eval_fanout and deploy_correlation to the chain).
         assert [s.name for s in result.stages] == [
             "investigate",
+            "eval_fanout",
+            "deploy_correlation",
             "root_cause",
             "remediation",
             "postmortem",
@@ -267,7 +280,7 @@ async def test_callback_failure_during_stage_fires_incident_failed() -> None:
     async def capture(ev: Any) -> None:
         events.append(ev)
 
-    async def crashing_stage(name: str, prompt: str) -> StageResult:
+    async def crashing_stage(name: str, prompt: str, **_kwargs) -> StageResult:
         if name == "root_cause":
             raise RuntimeError("stage boom")
         return StageResult(

@@ -282,6 +282,8 @@ _MUST_EVAL_FOLLOWUP_PROMPT = (
 
 async def stream_coordinator_with_chain(
     user_text: str,
+    *,
+    alert_payload: Optional[str] = None,
 ) -> AsyncIterator[dict]:
     """Stream the Coordinator and chain a follow-up eval if directive requires it.
 
@@ -322,7 +324,11 @@ async def stream_coordinator_with_chain(
     active_briefing = self_introspection._briefing_override
     pinned_externally = active_briefing is not None
     if active_briefing is None:
-        active_briefing = await synthesize_prior_context()
+        # Phase 7 / ADR-013 — pass the alert payload so the synthesizer can
+        # populate `similar_past_incidents` from the persistent memory store.
+        # Without this kwarg the RAG layer is silent and the demo loses its
+        # precedent-aware narrative.
+        active_briefing = await synthesize_prior_context(alert_payload=alert_payload)
 
     eval_runner_ran = False
 
@@ -417,6 +423,25 @@ def _watched_project_env(project_name: str) -> Iterator[None]:
 # routed to the matching sub-agent via the Coordinator's explicit-intent
 # trigger map in enforce_first_route + the prompt's Step 3 routing rules.
 _PIPELINE_FOLLOWUP_STAGES: tuple[tuple[str, str], ...] = (
+    # Phase 7 / ADR-012 — fan out the four code-eval suites in parallel
+    # via the ParallelEvalRunner. Trigger phrase matches that sub-agent's
+    # description: "run all evals", "fan out evals", "full evaluation".
+    (
+        "eval_fanout",
+        "Now run all evals — fan out the full evaluation suite "
+        "(faithfulness, drift, prompt-injection, toxicity) in parallel "
+        "across the recent traces and aggregate the verdicts.",
+    ),
+    # Phase 7 / ADR-014 — ask the DeployCorrelator to check the GitHub
+    # MCP for commits + PRs in the window around the incident's onset.
+    # Trigger phrase matches deploy_correlator's description triggers.
+    (
+        "deploy_correlation",
+        "Correlate this incident with recent deploys. Check recent commits "
+        "and pull requests on GitHub from roughly 24 hours before the "
+        "incident's onset through one hour after, and surface any change "
+        "that plausibly explains the failure pattern.",
+    ),
     ("root_cause", "Now hypothesize the root cause for this incident."),
     ("remediation", "Now draft a remediation plan for this incident."),
 )
@@ -430,11 +455,27 @@ def _make_postmortem_prompt(scenario: "IncidentScenario") -> str:
     )
 
 
-async def _run_stage(name: str, prompt: str) -> StageResult:
-    """Run one Coordinator turn and capture metrics."""
+async def _run_stage(
+    name: str,
+    prompt: str,
+    *,
+    alert_payload: Optional[str] = None,
+) -> StageResult:
+    """Run one Coordinator turn and capture metrics.
+
+    Args:
+        name: stage label used in trace records.
+        prompt: user_text fed to the Coordinator for this turn.
+        alert_payload: optional raw alert / scenario-initial-prompt text.
+            When provided, threaded down to ``synthesize_prior_context`` so
+            the per-turn briefing recalls similar past incidents from the
+            persistent memory store (Phase 7 / ADR-013).
+    """
     stage = StageResult(name=name, prompt=prompt)
     start = time.perf_counter()
-    async for rec in stream_coordinator_with_chain(prompt):
+    async for rec in stream_coordinator_with_chain(
+        prompt, alert_payload=alert_payload
+    ):
         stage.records.append(rec)
         if rec.get("kind") == "final":
             stage.final_text += rec.get("text", "")
@@ -674,6 +715,11 @@ async def run_end_to_end_scenario(
             ("postmortem", _make_postmortem_prompt(scenario)),
         ]
 
+        # Phase 7 / ADR-013 — alert payload threaded into every stage's
+        # synthesizer so the per-turn briefing recalls similar past
+        # incidents. Without this thread-through the RAG layer is silent.
+        scenario_alert_payload = scenario.initial_prompt()
+
         # Point sub-agent tool calls at the watched project for the duration
         # of the pipeline. Self-introspection (via the synthesizer's hardcoded
         # 'sentinel' project) is unaffected.
@@ -688,7 +734,9 @@ async def run_end_to_end_scenario(
                     )
                 )
                 try:
-                    stage = await _run_stage(name, prompt)
+                    stage = await _run_stage(
+                        name, prompt, alert_payload=scenario_alert_payload
+                    )
                 except Exception as exc:
                     result.error = (
                         f"stage {name!r} failed: {type(exc).__name__}: {exc}"

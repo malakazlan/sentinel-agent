@@ -63,7 +63,8 @@ def _make_canned_stream(
     one final record per stage so the StageResult has plausible structure.
     """
 
-    async def fake(user_text: str):
+    async def fake(user_text: str, **_kwargs):
+        # Accept arbitrary kwargs (alert_payload) the orchestrator now passes.
         for prefix, (author, final_text) in prompt_to_text.items():
             if prefix in user_text:
                 yield {"kind": "tool_call", "author": "coordinator",
@@ -78,12 +79,12 @@ def _make_canned_stream(
 
 @pytest.mark.asyncio
 async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
-    """Happy path: 4 stages + 1 critic stage (ADR-016 refinement loop).
+    """Happy path: 6 main stages + 1 critic stage (ADR-016 refinement loop).
 
-    The critic stream isn't mocked here; with the canned-stream fallback to
-    an empty generator, the critic stage produces no text, the extractor
-    returns None, and the loop breaks out — accepting the postmortem as-is.
-    The visible contract: 4 main stages plus exactly 1 critic_iteration_1.
+    The chain now runs investigate → eval_fanout → deploy_correlation →
+    root_cause → remediation → postmortem (Phase 7 / ADR-012 + ADR-014),
+    plus the critic on the first iteration (which we make accept on first
+    pass via canned stream).
     """
     scenario = get_scenario("fraud-fp-burst")
     valid_pm = _valid_postmortem().model_dump()
@@ -102,6 +103,14 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
     fake = _make_canned_stream(
         {
             "Investigate this incident": ("trace_analyzer", "Recent traces: 5 ERROR, 20 OK..."),
+            "fan out the full evaluation suite": (
+                "parallel_eval_runner",
+                "**Faithfulness:** clean | **Drift:** stable | **Prompt-injection:** clean | **Toxicity:** clean",
+            ),
+            "Correlate this incident with recent deploys": (
+                "deploy_correlator",
+                "**Window:** last 24h | **Repo:** acme/fraud-detector | **Candidates:** none above threshold.",
+            ),
             "hypothesize the root cause": ("root_cause", "1. Prompt regression (confidence: high)"),
             "draft a remediation plan": ("remediation", '{"severity":"P1","confidence":"high"}'),
             "write the postmortem": ("postmortem", pm_text),
@@ -116,10 +125,12 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
         result = await run_end_to_end_scenario(scenario)
 
     assert result.scenario_id == "fraud-fp-burst"
-    # 4 main stages + 1 critic iteration (accepted on first pass)
-    assert len(result.stages) == 5
+    # 6 main stages + 1 critic iteration (accepted on first pass)
+    assert len(result.stages) == 7
     assert [s.name for s in result.stages] == [
         "investigate",
+        "eval_fanout",
+        "deploy_correlation",
         "root_cause",
         "remediation",
         "postmortem",
@@ -184,7 +195,7 @@ async def test_pipeline_aborts_on_mid_stage_exception() -> None:
     """If a stage raises, the orchestrator captures the error and stops."""
     scenario = get_scenario("fraud-fp-burst")
 
-    async def crashing_stream(user_text: str):
+    async def crashing_stream(user_text: str, **_kwargs):
         if "hypothesize" in user_text:
             raise RuntimeError("simulated mid-stage failure")
         yield _final_record("ok", author="coordinator")
@@ -192,8 +203,9 @@ async def test_pipeline_aborts_on_mid_stage_exception() -> None:
     with patch("sentinel.coordinator.stream_coordinator_with_chain", side_effect=crashing_stream):
         result = await run_end_to_end_scenario(scenario)
 
-    # First stage completed; second stage failed
-    assert len(result.stages) == 1
+    # Three stages completed (investigate, eval_fanout, deploy_correlation);
+    # root_cause failed → orchestrator aborts.
+    assert len(result.stages) == 3
     assert result.error is not None
     assert "root_cause" in result.error
     assert "simulated mid-stage failure" in result.error

@@ -7,7 +7,13 @@
  */
 
 export type Severity = "P0" | "P1" | "P2" | "P3";
-export type StageName = "investigate" | "root_cause" | "remediation" | "postmortem";
+export type StageName =
+  | "investigate"
+  | "eval_fanout"        // Phase 7 / ADR-012 — ParallelEvalRunner fan-out
+  | "deploy_correlation" // Phase 7 / ADR-014 — GitHub MCP / DeployCorrelator
+  | "root_cause"
+  | "remediation"
+  | "postmortem";
 
 export interface IncidentStartedEvent {
   type: "incident_started";
