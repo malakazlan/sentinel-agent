@@ -1,0 +1,63 @@
+# Docker build context exclusions for Dockerfile.api.
+#
+# Keep this lean — every entry shaves build time AND prevents secrets
+# from leaking into image layers.
+
+# ── Repo plumbing ────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.github
+.dockerignore
+Dockerfile*
+
+# ── Editor / OS junk ─────────────────────────────────────────────────
+.vscode
+.idea
+.DS_Store
+*.swp
+*.swo
+
+# ── Python build / cache ─────────────────────────────────────────────
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+build
+dist
+
+# ── Secrets / local config ───────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+
+# ── Logs and run artifacts ───────────────────────────────────────────
+*.log
+phoenix-server.log
+scripts/_repro.log
+_run_*.py
+_run_*.out
+_run_*.stderr
+
+# ── Local Phoenix + memory state (machine-local, never shipped) ──────
+.phoenix
+data/memory
+
+# ── Frontend (built separately via web/Dockerfile) ───────────────────
+web
+
+# ── Tests / docs (not needed at runtime) ─────────────────────────────
+tests
+docs
+context
+.claude
+CLAUDE.md
+docs/superpowers
+README.md

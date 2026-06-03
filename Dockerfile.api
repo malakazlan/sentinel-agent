@@ -1,0 +1,40 @@
+# Sentinel API — FastAPI + uvicorn, served on Cloud Run.
+#
+# Build:   docker build -f Dockerfile.api -t sentinel-api .
+# Run:     docker run --rm -p 8080:8080 -e PORT=8080 sentinel-api
+# Deploy:  see docs/deploy.md
+#
+# The image installs only the runtime dependency group (no pytest, no
+# playwright). Source is copied AFTER deps so an unchanged dep set produces
+# a cached layer on rebuilds.
+
+ARG PYTHON_VERSION=3.10
+FROM python:${PYTHON_VERSION}-slim AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+# uv — the project's package manager. Pin matches pyproject's expectation.
+COPY --from=ghcr.io/astral-sh/uv:0.10.4 /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Install dependencies first so changing application code doesn't bust the
+# (much larger) deps layer.
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
+
+# Application code
+COPY sentinel ./sentinel
+COPY evals ./evals
+COPY LICENSE ./LICENSE
+
+# Cloud Run injects $PORT; default to 8080 so the image runs locally too.
+ENV PORT=8080
+EXPOSE 8080
+
+# `exec` form so SIGTERM reaches uvicorn directly (Cloud Run requires
+# graceful shutdown to bleed in-flight SSE streams).
+CMD ["sh", "-c", "uv run uvicorn sentinel.api.main:app --host 0.0.0.0 --port ${PORT}"]
