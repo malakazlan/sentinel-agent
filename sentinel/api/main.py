@@ -19,6 +19,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from sentinel.api.incidents import router as incidents_router  # noqa: E402
+from sentinel.api.phase8_routes import router as phase8_router  # noqa: E402
 from sentinel.observability.instrumentation import setup_tracing  # noqa: E402
 
 setup_tracing()
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(incidents_router)
+    app.include_router(phase8_router)  # Phase 8 / ADR-027 — additive routes
 
     @app.get("/health")
     async def health() -> dict[str, str]:
