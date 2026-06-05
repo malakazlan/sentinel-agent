@@ -95,28 +95,17 @@ export API_URL="$(gcloud run services describe sentinel-api --region "${REGION}"
 
 ## 2. Deploy the web frontend
 
-The Next.js build bakes `NEXT_PUBLIC_API_BASE_URL` in at compile time, so
-it goes through a `--build-arg`:
+The Next.js build bakes `NEXT_PUBLIC_API_BASE_URL` in at compile time —
+the API URL must reach the Docker build as a `--build-arg`. Use the
+`web/cloudbuild.yaml` config (the simpler `--tag` mode doesn't support
+build args):
 
 ```bash
 gcloud builds submit \
-  --tag "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/sentinel-web:latest" \
-  --config /dev/null \
-  --file web/Dockerfile \
+  --config=web/cloudbuild.yaml \
   --substitutions=_API_URL="${API_URL}" \
   ./web
 ```
-
-> If `gcloud builds submit` doesn't accept `--build-arg` in your version
-> (it varies), use a one-line `cloudbuild.yaml` or just build locally:
->
-> ```bash
-> docker build -f web/Dockerfile \
->   --build-arg NEXT_PUBLIC_API_BASE_URL="${API_URL}" \
->   -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/sentinel-web:latest" \
->   ./web
-> docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/sentinel-web:latest"
-> ```
 
 Then:
 

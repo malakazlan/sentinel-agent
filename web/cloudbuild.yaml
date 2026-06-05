@@ -1,0 +1,31 @@
+# Cloud Build config for sentinel-web.
+#
+# Run from the repo root with the web service URL substitution:
+#   gcloud builds submit \
+#     --config=web/cloudbuild.yaml \
+#     --substitutions=_API_URL="https://sentinel-api-XXXX.run.app" \
+#     ./web
+#
+# We need this config (not the simpler ``--tag`` mode) because Next.js
+# inlines ``NEXT_PUBLIC_*`` env vars at compile time, so the API URL must
+# reach the build as a Docker ``--build-arg``. ``--tag`` doesn't support
+# build args; a config file does.
+
+substitutions:
+  _API_URL: "http://localhost:8000"  # default for local builds
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "--build-arg"
+      - "NEXT_PUBLIC_API_BASE_URL=${_API_URL}"
+      - "-t"
+      - "us-central1-docker.pkg.dev/${PROJECT_ID}/sentinel/sentinel-web:latest"
+      - "."
+
+images:
+  - "us-central1-docker.pkg.dev/${PROJECT_ID}/sentinel/sentinel-web:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
