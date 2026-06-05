@@ -25,12 +25,16 @@ COPY --from=ghcr.io/astral-sh/uv:0.10.4 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Install dependencies first so changing application code doesn't bust the
-# (much larger) deps layer.
+# Install dependencies first so changing application code doesn't bust
+# the (much larger) deps layer. ``--no-install-project`` skips building
+# the sentinel package itself (which would otherwise require LICENSE +
+# sentinel/ + evals/ during the sync); we run uvicorn against the source
+# in CWD instead of as an installed wheel.
 COPY pyproject.toml uv.lock* ./
-RUN uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
+RUN uv sync --no-dev --frozen --no-install-project 2>/dev/null \
+    || uv sync --no-dev --no-install-project
 
-# Application code
+# Application code (no editable install — uvicorn imports from CWD).
 COPY sentinel ./sentinel
 COPY evals ./evals
 COPY LICENSE ./LICENSE
@@ -39,6 +43,9 @@ COPY LICENSE ./LICENSE
 ENV PORT=8080
 EXPOSE 8080
 
-# `exec` form so SIGTERM reaches uvicorn directly (Cloud Run requires
-# graceful shutdown to bleed in-flight SSE streams).
-CMD ["sh", "-c", "uv run uvicorn sentinel.api.main:app --host 0.0.0.0 --port ${PORT}"]
+# Run uvicorn directly from the venv built by uv. ``exec`` form so SIGTERM
+# reaches uvicorn (Cloud Run needs graceful shutdown to bleed in-flight
+# SSE streams). PYTHONPATH=/app lets uvicorn import ``sentinel.api.main``
+# without an editable install.
+ENV PYTHONPATH=/app
+CMD ["sh", "-c", "/app/.venv/bin/uvicorn sentinel.api.main:app --host 0.0.0.0 --port ${PORT}"]
