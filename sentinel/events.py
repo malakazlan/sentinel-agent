@@ -42,6 +42,7 @@ StageName = Literal[
     "remediation",
     "customer_impact",  # Phase 8 / ADR-018 — CustomerImpactQuantifier stage
     "postmortem",
+    "compliance",  # Phase 8 / ADR-019 — ComplianceOfficer stage
 ]
 Severity = Literal["P0", "P1", "P2", "P3"]
 

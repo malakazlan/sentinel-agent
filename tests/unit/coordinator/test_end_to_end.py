@@ -109,6 +109,18 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
         '"confidence": "seed_grounded", "caveats": []}\n```'
     )
 
+    # Canned ComplianceReport stub — single grounded citation, no
+    # obligations. The guard happens to pass it through because the
+    # mocked search registers the cite; for this happy-path test we
+    # actually expect the unhappy-path downgrade since we don't run
+    # search_regulations through the mock. Either way, the stage runs.
+    compliance_text = (
+        '```json\n{"incident_id": "fraud-fp-spike-20260524T204248Z", '
+        '"citations": [], "reporting_obligations": [], '
+        '"no_applicable_regulations": true, '
+        '"generic_guidance": "no specific regulation matched in this stub run"}\n```'
+    )
+
     fake = _make_canned_stream(
         {
             "Investigate this incident": ("trace_analyzer", "Recent traces: 5 ERROR, 20 OK..."),
@@ -131,6 +143,10 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
                 "critic",
                 critic_text,
             ),
+            "identify the regulatory exposure": (
+                "compliance_officer",
+                compliance_text,
+            ),
         }
     )
 
@@ -138,8 +154,9 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
         result = await run_end_to_end_scenario(scenario)
 
     assert result.scenario_id == "fraud-fp-burst"
-    # 7 main stages (Phase 8 added customer_impact) + 1 critic iteration
-    assert len(result.stages) == 8
+    # 7 main stages (Phase 8 / ADR-018 added customer_impact) + 1 critic
+    # iteration (accepted on first pass) + 1 compliance stage (ADR-019).
+    assert len(result.stages) == 9
     assert [s.name for s in result.stages] == [
         "investigate",
         "eval_fanout",
@@ -149,6 +166,7 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
         "customer_impact",
         "postmortem",
         "critic_iteration_1",
+        "compliance",
     ]
     assert result.error is None
     assert result.succeeded is True

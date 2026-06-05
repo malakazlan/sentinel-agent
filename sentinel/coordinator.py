@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 from google.adk.agents.readonly_context import ReadonlyContext
 
 from evals.completeness import CompletenessResult, completeness_score
+from sentinel.agents.compliance_officer import compliance_officer
 from sentinel.agents.customer_impact import customer_impact_quantifier
 from sentinel.agents.critic import (
     CRITIC_SCORE_THRESHOLD,
@@ -214,6 +215,7 @@ coordinator = LlmAgent(
         critic,
         slack_announcer,
         customer_impact_quantifier,
+        compliance_officer,
     ],
     generate_content_config=_GENERATE_CONFIG,
     before_agent_callback=before_coordinator_callback,
@@ -542,6 +544,14 @@ def _extract_critique_json(text: str) -> Optional[dict]:
     Same shape as the postmortem extractor — fenced first, raw fallback.
     Kept separate for readability and to make Phase 7 / ADR-016 changes
     auditable in one place.
+    """
+    return _extract_postmortem_json(text)
+
+
+def _extract_compliance_json(text: str) -> Optional[dict]:
+    """Pull the ComplianceReport JSON out of a ComplianceOfficer's final text.
+
+    Reuses the same fenced-first + raw-fallback extractor. Phase 8 / ADR-019.
     """
     return _extract_postmortem_json(text)
 
@@ -914,6 +924,82 @@ async def run_end_to_end_scenario(
                     except Exception:
                         pass
                 iterations_run += 1
+
+            # ── Phase 8 / ADR-019 — ComplianceOfficer stage ─────────────
+            #
+            # Runs after the critic loop terminates with a validated +
+            # accepted postmortem. Calls compliance_officer to identify
+            # applicable regulator clauses + reporting obligations, then
+            # the post-LLM hallucination guard strips any citation whose
+            # (regulation_short_name, clause_id) didn't appear in the
+            # most-recent corpus search. Result is attached to
+            # ``result.postmortem.regulatory_citations`` and
+            # ``result.postmortem.reporting_obligations`` so the
+            # PostmortemValidatedEvent carries them.
+            try:
+                compliance_prompt = (
+                    "Now identify the regulatory exposure for this "
+                    "incident. Call ``search_regulations`` 2-3 times "
+                    "with focused queries derived from the postmortem's "
+                    "root_cause + failure mode, then emit a single "
+                    "``ComplianceReport`` JSON object. Postmortem under "
+                    "review:\n```json\n"
+                    + result.postmortem.model_dump_json()
+                    + "\n```"
+                )
+                await emit(
+                    StageStartedEvent(
+                        incident_id=emitted_incident_id,
+                        elapsed_ms=_elapsed_ms(),
+                        stage="compliance",
+                        prompt_preview=compliance_prompt[:400],
+                    )
+                )
+                compliance_stage = await _run_stage(
+                    "compliance",
+                    compliance_prompt,
+                    alert_payload=scenario_alert_payload,
+                )
+                result.stages.append(compliance_stage)
+                await emit(
+                    StageCompletedEvent(
+                        incident_id=emitted_incident_id,
+                        elapsed_ms=_elapsed_ms(),
+                        stage="compliance",
+                        latency_ms=compliance_stage.latency_ms,
+                        authors=compliance_stage.authors,
+                        final_text=compliance_stage.final_text,
+                    )
+                )
+
+                compliance_dict = _extract_compliance_json(
+                    compliance_stage.final_text
+                )
+                if compliance_dict is not None:
+                    from sentinel.agents.compliance_officer import (
+                        validate_compliance_report,
+                    )
+                    from sentinel.agents.schemas import ComplianceReport
+
+                    try:
+                        raw_report = ComplianceReport(**compliance_dict)
+                        guarded = validate_compliance_report(raw_report)
+                        result.postmortem = result.postmortem.model_copy(
+                            update={
+                                "regulatory_citations": guarded.citations,
+                                "reporting_obligations": guarded.reporting_obligations,
+                            }
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        _logger_for_slack().warning(
+                            "Compliance report failed schema validation; "
+                            "leaving postmortem citations empty: %s", exc,
+                        )
+            except Exception as exc:  # noqa: BLE001
+                _logger_for_slack().warning(
+                    "Compliance stage failed; postmortem will ship "
+                    "without regulatory_citations. %s", exc,
+                )
 
             await emit(
                 PostmortemValidatedEvent(

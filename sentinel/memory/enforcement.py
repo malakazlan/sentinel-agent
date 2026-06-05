@@ -101,6 +101,15 @@ _EXPLICIT_USER_TRIGGERS: dict[str, tuple[str, ...]] = {
         "impact quantification",
         "estimate revenue loss",
     ),
+    "compliance_officer": (
+        "regulatory exposure",
+        "regulatory citations",
+        "regulator notification",
+        "reporting obligation",
+        "compliance check",
+        "applicable regulation",
+        "which regulator",
+    ),
 }
 
 

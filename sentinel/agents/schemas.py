@@ -261,6 +261,26 @@ class Postmortem(BaseModel):
         ),
     )
 
+    # Phase 8 / ADR-019 — regulatory exposure populated by the
+    # ComplianceOfficerAgent that runs after PostmortemAgent. Optional so
+    # legacy postmortems still validate.
+    regulatory_citations: list["CitedClause"] = Field(
+        default_factory=list,
+        description=(
+            "List of cited regulator clauses, each grounded in the "
+            "curated corpus. Empty list is acceptable only when the "
+            "ComplianceOfficer determined no specific regulation matched."
+        ),
+    )
+    reporting_obligations: list["ReportingObligation"] = Field(
+        default_factory=list,
+        description=(
+            "List of regulator notifications this incident triggers, "
+            "with timeframes (24h / 72h / 30d) and one-line draft "
+            "headlines. May be empty when no obligations apply."
+        ),
+    )
+
     @model_validator(mode="after")
     def _timeline_entries_nonempty(self) -> "Postmortem":
         """No empty strings in the timeline."""
@@ -382,6 +402,120 @@ class ImpactReport(BaseModel):
             raise ValueError(
                 f"ImpactReport with confidence={self.confidence!r} must "
                 "include at least one caveat — figures are not seed-grounded."
+            )
+        return self
+
+
+# ── Phase 8 / ADR-019 — Regulatory citations + reporting obligations ──────
+
+
+class CitedClause(BaseModel):
+    """One regulator clause the ComplianceOfficer judged applicable.
+
+    The post-LLM validator enforces that the ``(regulation_short_name,
+    clause_id)`` tuple appeared in the most recent
+    ``RegulatorySearch.semantic_search`` result. Any cite that doesn't
+    resolve is replaced with the fallback "no specific regulation
+    matched, generic guidance applied" block. Hallucinated cites are a
+    disqualifier (ADR-019).
+    """
+
+    regulation_short_name: str = Field(..., min_length=2, max_length=40)
+    regulation_full_name: str = Field(..., min_length=2, max_length=200)
+    clause_id: str = Field(..., min_length=1, max_length=40)
+    clause_title: str = Field(..., min_length=2, max_length=200)
+    quoted_excerpt: str = Field(
+        ..., min_length=20, max_length=800,
+        description=(
+            "Verbatim excerpt from the clause that the agent judged "
+            "applicable. Must be a substring of the corpus's clause_text "
+            "(the validator does NOT enforce substring at schema time, "
+            "but the post-LLM check verifies the (short_name, clause_id) "
+            "tuple appeared in the most recent search result)."
+        ),
+    )
+    source_url: str = Field(..., min_length=10, max_length=500)
+    applicability_rationale: str = Field(
+        ..., min_length=20, max_length=400,
+        description=(
+            "1-2 sentences explaining why this clause applies to the "
+            "specific incident under review. No fabrication — must "
+            "reference the incident's failure mode."
+        ),
+    )
+
+
+class ReportingObligation(BaseModel):
+    """One regulator notification this incident triggers."""
+
+    regulator: str = Field(..., min_length=3, max_length=120)
+    timeframe_days: int = Field(
+        ..., ge=0, le=365,
+        description=(
+            "Reporting window in calendar days from incident detection. "
+            "0 = immediate; e.g. FCA SUP 15.3 = 1 day; EU AI Act = 3."
+        ),
+    )
+    triggered_by_clauses: list[str] = Field(
+        ..., min_length=1,
+        description=(
+            "List of clause ids that triggered this obligation. Each "
+            "must appear in the report's citations."
+        ),
+    )
+    draft_notification_headline: str = Field(
+        ..., min_length=20, max_length=300,
+        description=(
+            "One-line draft headline for the regulator notification. "
+            "Specific enough to anchor a longer drafted notification but "
+            "does NOT include sensitive customer detail."
+        ),
+    )
+
+
+class ComplianceReport(BaseModel):
+    """The ComplianceOfficer's output — citations + obligations.
+
+    When the corpus search returns no applicable clauses, the agent emits
+    ``no_applicable_regulations=True`` plus a single ``generic_guidance``
+    string. The schema rejects the empty-citations + empty-guidance
+    combination — the agent must say something.
+    """
+
+    incident_id: str = Field(..., min_length=3, max_length=80)
+    citations: list[CitedClause] = Field(default_factory=list)
+    reporting_obligations: list[ReportingObligation] = Field(default_factory=list)
+    no_applicable_regulations: bool = Field(
+        default=False,
+        description=(
+            "True only when the corpus search returned no clauses the "
+            "agent judged applicable. Pair with a non-empty "
+            "``generic_guidance`` string."
+        ),
+    )
+    generic_guidance: Optional[str] = Field(
+        default=None,
+        description=(
+            "Fallback guidance string when no specific regulation "
+            "matched. Required when ``no_applicable_regulations=True``."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _empty_combo_is_invalid(self) -> "ComplianceReport":
+        if (
+            not self.citations
+            and not self.no_applicable_regulations
+        ):
+            raise ValueError(
+                "ComplianceReport with no citations must set "
+                "no_applicable_regulations=True and include "
+                "generic_guidance."
+            )
+        if self.no_applicable_regulations and not self.generic_guidance:
+            raise ValueError(
+                "no_applicable_regulations=True requires non-empty "
+                "generic_guidance."
             )
         return self
 

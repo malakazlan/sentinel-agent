@@ -1,5 +1,10 @@
 import { Badge } from "@/components/ui/badge";
-import type { ImpactReport, Postmortem } from "@/lib/types";
+import type {
+  CitedClause,
+  ImpactReport,
+  Postmortem,
+  ReportingObligation,
+} from "@/lib/types";
 import { severityVariant } from "@/lib/severity";
 
 const TIMELINE_SEPARATOR = " — ";
@@ -101,6 +106,11 @@ export function PostmortemDocument({
       {pm.impact_quantified && (
         <ImpactQuantifiedSection impact={pm.impact_quantified} />
       )}
+
+      <RegulatoryExposureSection
+        citations={pm.regulatory_citations ?? []}
+        obligations={pm.reporting_obligations ?? []}
+      />
 
       <section className="mb-7">
         <SectionLabel>Timeline</SectionLabel>
@@ -244,6 +254,105 @@ function HeroMetric({
       </div>
       {sub && <div className="mt-1 text-xs text-text-tertiary">{sub}</div>}
     </div>
+  );
+}
+
+/**
+ * Regulatory exposure panel — Phase 8 / ADR-019. Renders:
+ *   - the cited regulator clauses (clause id, full name, applicability,
+ *     quoted excerpt, source URL)
+ *   - the triggered reporting obligations (regulator, timeframe, headline)
+ *
+ * Omits itself entirely when no citations + no obligations (the legacy
+ * postmortem case).
+ */
+function RegulatoryExposureSection({
+  citations,
+  obligations,
+}: {
+  citations: CitedClause[];
+  obligations: ReportingObligation[];
+}) {
+  const cites = citations;
+  const obls = obligations;
+  if (cites.length === 0 && obls.length === 0) {
+    return null;
+  }
+  return (
+    <section className="mb-7">
+      <SectionLabel>Regulatory exposure</SectionLabel>
+
+      {obls.length > 0 && (
+        <div className="mb-4 grid gap-2">
+          {obls.map((o, idx) => (
+            <div
+              key={idx}
+              className="rounded-md border border-accent-border bg-accent-bg p-4"
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-[13px] font-semibold text-accent-text">
+                  {o.regulator}
+                </div>
+                <Badge variant="p1">
+                  {o.timeframe_days === 0
+                    ? "Immediate"
+                    : `${o.timeframe_days}d window`}
+                </Badge>
+              </div>
+              <div className="text-[13.5px] leading-relaxed text-text">
+                {o.draft_notification_headline}
+              </div>
+              {o.triggered_by_clauses.length > 0 && (
+                <div className="mt-2 font-mono text-xs text-text-tertiary">
+                  Triggered by: {o.triggered_by_clauses.join(", ")}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {cites.length > 0 && (
+        <div className="grid gap-3">
+          {cites.map((c, idx) => (
+            <div
+              key={idx}
+              className="rounded-md border border-border bg-bg px-4 py-3.5"
+            >
+              <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2">
+                <Badge variant="ok">{c.regulation_short_name}</Badge>
+                <span className="font-mono text-xs text-text-secondary">
+                  {c.clause_id}
+                </span>
+                <span className="text-[13px] text-text-secondary">
+                  · {c.clause_title}
+                </span>
+              </div>
+              <div className="mb-2 text-[13px] text-text-tertiary">
+                {c.regulation_full_name}
+              </div>
+              <blockquote className="mb-2 border-l-2 border-border pl-3 text-[13px] italic leading-relaxed text-text-secondary">
+                {c.quoted_excerpt}
+              </blockquote>
+              <div className="text-[13px] leading-relaxed text-text">
+                {c.applicability_rationale}
+              </div>
+              <div className="mt-2 truncate text-xs text-text-tertiary">
+                Source:{" "}
+                <a
+                  href={c.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-accent underline-offset-2 hover:underline"
+                >
+                  {c.source_url}
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

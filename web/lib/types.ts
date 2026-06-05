@@ -14,7 +14,8 @@ export type StageName =
   | "root_cause"
   | "remediation"
   | "customer_impact"    // Phase 8 / ADR-018 — CustomerImpactQuantifier
-  | "postmortem";
+  | "postmortem"
+  | "compliance";        // Phase 8 / ADR-019 — ComplianceOfficer
 
 export interface IncidentStartedEvent {
   type: "incident_started";
@@ -157,6 +158,31 @@ export interface ImpactReport {
   caveats: string[];
 }
 
+/**
+ * One regulator clause cited by the ComplianceOfficer (Phase 8 / ADR-019).
+ * Every cite is grounded against the curated corpus; hallucinated cites
+ * never reach the wire.
+ */
+export interface CitedClause {
+  regulation_short_name: string;
+  regulation_full_name: string;
+  clause_id: string;
+  clause_title: string;
+  quoted_excerpt: string;
+  source_url: string;
+  applicability_rationale: string;
+}
+
+/**
+ * One regulator notification this incident triggers (Phase 8 / ADR-019).
+ */
+export interface ReportingObligation {
+  regulator: string;
+  timeframe_days: number;
+  triggered_by_clauses: string[];
+  draft_notification_headline: string;
+}
+
 export interface Postmortem {
   title: string;
   incident_id: string;
@@ -173,6 +199,11 @@ export interface Postmortem {
   // postmortems may omit it; UI gracefully falls back to the prose
   // `impact` field in that case).
   impact_quantified?: ImpactReport | null;
+  // Phase 8 / ADR-019 — regulator exposure populated by the
+  // ComplianceOfficer after the critic loop accepts the postmortem.
+  // Empty arrays are valid (no specific regulation matched).
+  regulatory_citations?: CitedClause[];
+  reporting_obligations?: ReportingObligation[];
 }
 
 export interface SeedSummary {

@@ -150,4 +150,86 @@ describe("PostmortemDocument", () => {
     expect(screen.queryByText("Quantified impact")).not.toBeInTheDocument();
     expect(screen.queryByText("Audit citations")).not.toBeInTheDocument();
   });
+
+  // ── Phase 8 / ADR-019 — Regulatory exposure (citations + obligations) ─
+
+  it("renders the regulatory exposure section with citations + obligations", () => {
+    const pmWithRegs: Postmortem = {
+      ...samplePm,
+      regulatory_citations: [
+        {
+          regulation_short_name: "SR 11-7",
+          regulation_full_name:
+            "Federal Reserve Supervisory Guidance on Model Risk Management",
+          clause_id: "V",
+          clause_title: "Ongoing monitoring",
+          quoted_excerpt:
+            "Ongoing monitoring confirms that the model is appropriately implemented and is performing as intended.",
+          source_url:
+            "https://www.federalreserve.gov/supervisionreg/srletters/sr1107a1.pdf",
+          applicability_rationale:
+            "The 3x FP spike represents material model performance degradation that SR 11-7 requires ongoing monitoring to detect.",
+        },
+      ],
+      reporting_obligations: [
+        {
+          regulator: "Federal Reserve / OCC primary supervisor",
+          timeframe_days: 30,
+          triggered_by_clauses: ["V"],
+          draft_notification_headline:
+            "Material false-positive rate deviation detected in production fraud-detection model; rollback completed within 60s.",
+        },
+      ],
+    };
+    render(<PostmortemDocument pm={pmWithRegs} />);
+    expect(screen.getByText("Regulatory exposure")).toBeInTheDocument();
+    expect(screen.getByText("SR 11-7")).toBeInTheDocument();
+    expect(screen.getByText("V")).toBeInTheDocument();
+    expect(screen.getByText("· Ongoing monitoring")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Federal Reserve / OCC primary supervisor",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("30d window")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Material false-positive rate deviation detected/),
+    ).toBeInTheDocument();
+    // Source URL renders as an external link.
+    const link = screen.getByRole("link", {
+      name: /federalreserve\.gov/,
+    });
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("omits the regulatory exposure section when both arrays are empty/missing", () => {
+    render(<PostmortemDocument pm={samplePm} />);
+    expect(screen.queryByText("Regulatory exposure")).not.toBeInTheDocument();
+  });
+
+  it("renders the obligation block when only obligations are present (no cites)", () => {
+    // The ADR-019 'no specific regulation matched' fallback strips
+    // citations but may still surface a generic obligation; the UI must
+    // render the obligation block independently.
+    const pmObligationsOnly: Postmortem = {
+      ...samplePm,
+      regulatory_citations: [],
+      reporting_obligations: [
+        {
+          regulator: "Internal compliance review board",
+          timeframe_days: 7,
+          triggered_by_clauses: [],
+          draft_notification_headline:
+            "Generic guidance: incident reviewed under firm-internal compliance process.",
+        },
+      ],
+    };
+    render(<PostmortemDocument pm={pmObligationsOnly} />);
+    expect(screen.getByText("Regulatory exposure")).toBeInTheDocument();
+    expect(
+      screen.getByText("Internal compliance review board"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("7d window")).toBeInTheDocument();
+  });
 });
