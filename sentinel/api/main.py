@@ -6,6 +6,8 @@ Mount this with uvicorn:
 
 from __future__ import annotations
 
+import os
+
 from dotenv import load_dotenv
 
 # Load .env BEFORE any sentinel imports so Vertex AI config
@@ -22,6 +24,30 @@ from sentinel.observability.instrumentation import setup_tracing  # noqa: E402
 setup_tracing()
 
 
+_DEV_ORIGINS: tuple[str, ...] = ("http://localhost:3000", "http://127.0.0.1:3000")
+
+
+def _allowed_origins() -> list[str]:
+    """Resolve the CORS allow-list.
+
+    Reads ``SENTINEL_ALLOWED_ORIGINS`` (comma-separated) and unions it
+    with the localhost dev origins. On Cloud Run, set this env var to the
+    deployed web origin (e.g. ``https://sentinel-web-XXX.run.app``) so
+    EventSource requests from the browser are not blocked. Wildcard
+    ``*`` is intentionally NOT special-cased — keep it explicit.
+    """
+    extra = os.environ.get("SENTINEL_ALLOWED_ORIGINS", "")
+    parsed = [o.strip() for o in extra.split(",") if o.strip()]
+    # Preserve order, dedupe.
+    seen: set[str] = set()
+    out: list[str] = []
+    for origin in (*_DEV_ORIGINS, *parsed):
+        if origin not in seen:
+            seen.add(origin)
+            out.append(origin)
+    return out
+
+
 def create_app() -> FastAPI:
     """Build the FastAPI app with CORS, the incidents router, and a health endpoint."""
     app = FastAPI(
@@ -29,10 +55,9 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="HTTP + SSE wrapper around the Sentinel five-agent pipeline.",
     )
-    # Permissive CORS for local dev. The Next.js dev server runs on 3000.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_origins=_allowed_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
