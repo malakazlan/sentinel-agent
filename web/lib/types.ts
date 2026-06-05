@@ -109,6 +109,24 @@ export interface IncidentFailedEvent {
   error: string;
 }
 
+/**
+ * A prompt-evolution proposal — Phase 8 / ADR-020.
+ * Emitted by the background routine after it scores variants.
+ */
+export interface PromptEvolvedEvent {
+  type: "prompt_evolved";
+  incident_id: string;
+  elapsed_ms: number;
+  target_agent: string;
+  current_prompt_version: string;
+  baseline_avg_score: number;
+  winner_variant_id: string | null;
+  winner_score: number | null;
+  score_delta_over_baseline: number;
+  promotion_recommended: boolean;
+  decision_rationale: string;
+}
+
 export type IncidentEvent =
   | IncidentStartedEvent
   | BriefingResolvedEvent
@@ -117,7 +135,8 @@ export type IncidentEvent =
   | StageCompletedEvent
   | PostmortemValidatedEvent
   | IncidentCompletedEvent
-  | IncidentFailedEvent;
+  | IncidentFailedEvent
+  | PromptEvolvedEvent;
 
 // ── REST response shapes ──────────────────────────────────────────────────
 

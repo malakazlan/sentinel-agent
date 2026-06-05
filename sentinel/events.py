@@ -81,6 +81,26 @@ class SimilarIncidentSummary(BaseModel):
     similarity: float = Field(..., ge=0.0, le=1.0)
 
 
+class PromptEvolvedEvent(_EventBase):
+    """A prompt-evolution proposal landed (recommended OR no-improvement).
+
+    Phase 8 / ADR-020. Emitted by the prompt-evolution background routine
+    after it scores all variants and decides whether to recommend
+    promotion. The UI uses this event to render the "Approve evolution"
+    banner on the /prompts page.
+    """
+
+    type: Literal["prompt_evolved"] = "prompt_evolved"
+    target_agent: str
+    current_prompt_version: str
+    baseline_avg_score: float = Field(..., ge=0.0, le=1.0)
+    winner_variant_id: Optional[str] = None
+    winner_score: Optional[float] = None
+    score_delta_over_baseline: float
+    promotion_recommended: bool
+    decision_rationale: str = Field(..., max_length=1000)
+
+
 class BriefingResolvedEvent(_EventBase):
     """The Coordinator's self-introspection briefing for this incident.
 
@@ -154,6 +174,7 @@ _EVENT_UNION = Annotated[
         PostmortemValidatedEvent,
         IncidentCompletedEvent,
         IncidentFailedEvent,
+        PromptEvolvedEvent,
     ],
     Field(discriminator="type"),
 ]
