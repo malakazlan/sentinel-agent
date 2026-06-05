@@ -43,11 +43,11 @@ export REPO=sentinel
 ## 1. Deploy the API
 
 ```bash
-# Build + push (Cloud Build, so no local docker daemon required)
+# Build + push (Cloud Build — no local docker daemon required). The
+# build context is the repo root; the canonical ``Dockerfile`` lives
+# there and Cloud Build picks it up automatically.
 gcloud builds submit \
   --tag "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/sentinel-api:latest" \
-  --config /dev/null \
-  --file Dockerfile.api \
   .
 
 # Deploy

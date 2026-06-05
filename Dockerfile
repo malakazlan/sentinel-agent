@@ -1,8 +1,12 @@
 # Sentinel API — FastAPI + uvicorn, served on Cloud Run.
 #
-# Build:   docker build -f Dockerfile.api -t sentinel-api .
+# Build:   docker build -t sentinel-api .
 # Run:     docker run --rm -p 8080:8080 -e PORT=8080 sentinel-api
 # Deploy:  see docs/deploy.md
+#
+# Lives at the repo root so ``gcloud builds submit --tag ...`` auto-finds
+# it. The web frontend has its own Dockerfile at ``web/Dockerfile`` with
+# its own build context.
 #
 # The image installs only the runtime dependency group (no pytest, no
 # playwright). Source is copied AFTER deps so an unchanged dep set produces
