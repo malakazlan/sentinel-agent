@@ -140,14 +140,33 @@ gcloud run services describe sentinel-web --region "${REGION}" --format='value(s
 
 ---
 
-## 3. Phoenix (optional)
+## 3. Observability backend (optional — production points at customer collector)
+
+In production, Sentinel does **not** bundle Phoenix. It points
+`PHOENIX_COLLECTOR_ENDPOINT` (or any OTLP/HTTP exporter target via
+`OTEL_EXPORTER_OTLP_ENDPOINT`) at the **customer's existing observability
+stack** — Google Cloud Trace, Datadog APM, Honeycomb, Grafana Tempo,
+etc. The seed step gracefully degrades when the collector is
+unreachable (`spans_written=0` and a WARNING log; ADR-017) so the
+incident pipeline keeps running even when the observability layer is
+offline. Treat span export as best-effort overhead, not a hard
+dependency.
+
+Update the deployed API to point at a real collector:
+
+```bash
+gcloud run services update sentinel-api \
+  --region "${REGION}" \
+  --update-env-vars "PHOENIX_COLLECTOR_ENDPOINT=https://<your-collector-host>"
+```
 
 For the hackathon demo URL, the simplest path is to skip remote Phoenix
-and let the API run without an OTLP exporter target — traces still
-emit through OpenInference but go nowhere. The agents work end-to-end
-without Phoenix being reachable.
+entirely — span exports fail soft, the agents work end-to-end. Continue
+to the "Phoenix on Cloud Run" recipe below only if you want to give
+judges a clickable trace tree.
 
-If you want Phoenix in the cloud:
+If you want a clickable Phoenix UI in the cloud (dev convenience only —
+real deployments don't do this):
 
 ```bash
 gcloud run deploy sentinel-phoenix \

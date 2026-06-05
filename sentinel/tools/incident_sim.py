@@ -27,12 +27,17 @@ Public API:
 from __future__ import annotations
 
 import json
+import logging
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+import httpx
 from phoenix.client import Client
+
+_logger = logging.getLogger(__name__)
 
 # OpenInference standard attribute keys — keeps Phoenix UI rendering correct.
 _ATTR_INPUT_VALUE = "input.value"
@@ -350,13 +355,48 @@ _SEEDERS = {
     "lending-latency-regression": seed_lending_latency_regression,
 }
 
+# Mirror of each seeder's default ``project`` kwarg. Used to label the
+# degraded ``SeedSummary`` when the OTLP collector is unreachable so
+# downstream readers (the orchestrator + UI) still see *which* watched
+# project the seed would have populated.
+_PROJECT_BY_SCENARIO: dict[str, str] = {
+    "fraud-fp-burst": "fraud-detector-prod",
+    "kyc-sanctions-hallucination": "kyc-screener-prod",
+    "lending-latency-regression": "underwriting-prod",
+}
+
 
 def seed_scenario(scenario_id: str, *, client: Optional[Client] = None) -> SeedSummary:
-    """Dispatch to the matching seed function by scenario id."""
+    """Dispatch to the matching seed function by scenario id.
+
+    ADR-017 — When the Phoenix / OTLP collector is unreachable
+    (``httpx.ConnectError``), this function logs a WARNING and returns a
+    degraded ``SeedSummary`` with ``spans_written=0`` instead of raising.
+    The agent pipeline then runs without trace grounding rather than
+    failing the whole incident, matching real-world deployments where the
+    customer's collector may be reachable from some networks but not
+    others. ALL other exceptions still propagate.
+    """
     seeder = _SEEDERS.get(scenario_id)
     if seeder is None:
         raise KeyError(
             f"no seeder registered for scenario id {scenario_id!r}. "
             f"Known: {list(_SEEDERS.keys())}"
         )
-    return seeder(client=client)
+    try:
+        return seeder(client=client)
+    except httpx.ConnectError as exc:
+        endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "<unset>")
+        project = _PROJECT_BY_SCENARIO.get(scenario_id, "")
+        _logger.warning(
+            "Phoenix OTLP collector unreachable at %s; seed_scenario(%s) "
+            "degraded to no-op (project=%s, spans_written=0). Pipeline will "
+            "continue without trace grounding. Underlying error: %s",
+            endpoint, scenario_id, project, exc,
+        )
+        return SeedSummary(
+            project=project,
+            spans_written=0,
+            n_ok=0,
+            n_error=0,
+        )

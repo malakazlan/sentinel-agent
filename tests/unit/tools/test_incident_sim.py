@@ -174,3 +174,60 @@ def test_every_scripted_scenario_has_a_registered_seeder() -> None:
             f"scenario {scenario.id!r} has no seeder in incident_sim._SEEDERS — "
             f"add one or remove the scenario"
         )
+
+
+# ── ADR-017 — graceful degradation when OTLP collector is unreachable ────
+
+
+def test_seed_scenario_degrades_to_no_op_when_phoenix_unreachable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the OTLP collector is down, the seed must NOT raise.
+
+    Real-world deployments point Sentinel at a customer-existing collector
+    (Cloud Trace, Datadog, etc). That collector may be unreachable from
+    some networks. We degrade to ``spans_written=0`` with a WARNING log
+    rather than failing the entire incident pipeline. ADR-017.
+    """
+    import httpx
+
+    # Phoenix client that crashes on the actual network call, mimicking
+    # a refused connection from inside a Cloud Run container.
+    failing_client = MagicMock()
+    failing_client.spans.log_spans.side_effect = httpx.ConnectError(
+        "[Errno 111] Connection refused"
+    )
+
+    with caplog.at_level("WARNING", logger="sentinel.tools.incident_sim"):
+        summary = seed_scenario("fraud-fp-burst", client=failing_client)
+
+    # Degraded summary — project preserved for the UI, counts zeroed.
+    assert isinstance(summary, SeedSummary)
+    assert summary.project == "fraud-detector-prod"
+    assert summary.spans_written == 0
+    assert summary.n_ok == 0
+    assert summary.n_error == 0
+
+    # WARNING log carries the actionable detail: which collector, which
+    # scenario, and the underlying error. No silent failure.
+    assert any(
+        "unreachable" in record.message.lower()
+        and "fraud-fp-burst" in record.message
+        and record.levelname == "WARNING"
+        for record in caplog.records
+    ), [(r.levelname, r.message) for r in caplog.records]
+
+
+def test_seed_scenario_propagates_non_connect_errors() -> None:
+    """Only ``httpx.ConnectError`` is swallowed — other failures still raise.
+
+    A 500 from the collector, a 401 auth failure, a serialization bug —
+    these are real bugs the operator needs to see, not transient network
+    weather. Degradation is scoped tightly to ``ConnectError``.
+    """
+    failing_client = MagicMock()
+    failing_client.spans.log_spans.side_effect = RuntimeError(
+        "phoenix returned 500"
+    )
+    with pytest.raises(RuntimeError, match="phoenix returned 500"):
+        seed_scenario("fraud-fp-burst", client=failing_client)
