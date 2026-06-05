@@ -40,6 +40,7 @@ StageName = Literal[
     "deploy_correlation",  # Phase 7 / ADR-014 — DeployCorrelator stage
     "root_cause",
     "remediation",
+    "customer_impact",  # Phase 8 / ADR-018 — CustomerImpactQuantifier stage
     "postmortem",
 ]
 Severity = Literal["P0", "P1", "P2", "P3"]

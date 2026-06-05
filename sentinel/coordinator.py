@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 from google.adk.agents.readonly_context import ReadonlyContext
 
 from evals.completeness import CompletenessResult, completeness_score
+from sentinel.agents.customer_impact import customer_impact_quantifier
 from sentinel.agents.critic import (
     CRITIC_SCORE_THRESHOLD,
     MAX_REFINEMENT_ITERATIONS,
@@ -212,6 +213,7 @@ coordinator = LlmAgent(
         deploy_correlator,
         critic,
         slack_announcer,
+        customer_impact_quantifier,
     ],
     generate_content_config=_GENERATE_CONFIG,
     before_agent_callback=before_coordinator_callback,
@@ -449,11 +451,42 @@ _PIPELINE_FOLLOWUP_STAGES: tuple[tuple[str, str], ...] = (
 )
 
 
+def _make_customer_impact_prompt(scenario: "IncidentScenario") -> str:
+    """Build the customer-impact stage prompt with the scenario's impact_seed pinned.
+
+    The agent needs the seed block in the conversation to ground every
+    figure. Embedding it in the stage prompt (rather than in
+    ``initial_prompt``) keeps it close to the agent's invocation in the
+    trace tree and means the per-scenario seed never appears unless the
+    pipeline actually runs the customer_impact stage.
+    """
+    import json
+    seed_json = json.dumps(scenario.impact_seed or {}, indent=2)
+    return (
+        "Now quantify the customer + financial impact of this incident.\n\n"
+        "Scenario impact_seed (ground EVERY figure in this — any value you "
+        "cite must trace back to one of these keys or to a value already "
+        "present in the alert payload above):\n```json\n"
+        + seed_json
+        + "\n```\n\n"
+        "Emit a single `ImpactReport` JSON object in a fenced ```json``` "
+        "block. Every claim must appear as a one-line entry in "
+        "`audit_citation_lines`. Set `confidence` honestly: "
+        "`seed_grounded` only when every figure traces to impact_seed, "
+        "`scenario_inferred` when you derived from alert_payload alone, "
+        "`default_caveat` (with zeros and explicit caveats) when the seed "
+        "is empty. No invented figures."
+    )
+
+
 def _make_postmortem_prompt(scenario: "IncidentScenario") -> str:
     """Build the postmortem turn's prompt with the scenario's incident_id pinned."""
     return (
         f"Now write the postmortem for incident_id={scenario.incident_id!r}. "
-        f"Use the trace evidence and prior stages of this investigation."
+        f"Use the trace evidence and prior stages of this investigation. "
+        f"If the prior customer_impact stage produced an ImpactReport, "
+        f"embed it verbatim under the `impact_quantified` field of the "
+        f"postmortem JSON — do NOT re-derive the figures."
     )
 
 
@@ -714,6 +747,9 @@ async def run_end_to_end_scenario(
         stages_to_run: list[tuple[str, str]] = [
             ("investigate", scenario.initial_prompt()),
             *_PIPELINE_FOLLOWUP_STAGES,
+            # Phase 8 / ADR-018 — quantify dollar + customer impact before
+            # PostmortemAgent so the RCA can embed the figures.
+            ("customer_impact", _make_customer_impact_prompt(scenario)),
             ("postmortem", _make_postmortem_prompt(scenario)),
         ]
 

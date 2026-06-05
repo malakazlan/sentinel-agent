@@ -37,6 +37,11 @@ class IncidentScenario:
     alert_payload: dict[str, Any]
     workflow: str  # human-readable FinServ workflow, e.g. "fraud detection"
     watched_project: str  # Phoenix project name for this scenario's synthetic traces
+    # Phase 8 / ADR-018 — quantification seed for CustomerImpactQuantifier.
+    # Each field is consulted by the agent's prompt to ground figures.
+    # Missing fields default to None; the agent emits caveats and flags
+    # ``confidence=default_caveat`` when the seed is empty.
+    impact_seed: dict[str, Any] = field(default_factory=dict)
 
     @property
     def incident_id(self) -> str:
@@ -68,6 +73,17 @@ SCENARIOS: list[IncidentScenario] = [
         severity="P1",
         workflow="fraud detection",
         watched_project="fraud-detector-prod",
+        impact_seed={
+            "avg_transaction_usd": 67.60,                  # 84300 / 1247
+            "affected_transactions": 1247,
+            "affected_customers": 312,
+            "blocked_transactions_recoverable_pct": 0.85,  # 85% get retried
+            "unrecoverable_revenue_share_pct": 0.15,
+            "support_contact_rate_per_blocked_customer_pct": 0.40,
+            "support_cost_per_contact_usd": 8.20,
+            "baseline_trust_index": 0.86,
+            "trust_index_delta_per_freeze": -0.0009,       # empirical
+        },
         alert_payload={
             "alert_id": "fraud-fp-spike-20260524T204248Z",
             "source": "fraud-detector-prod-us-central1",
@@ -107,6 +123,16 @@ SCENARIOS: list[IncidentScenario] = [
         severity="P0",
         workflow="KYC/AML screening",
         watched_project="kyc-screener-prod",
+        impact_seed={
+            "affected_customers": 7,
+            "avg_onboarding_revenue_usd": 4500,            # avg first-year value of an onboarded HNW customer
+            "onboarding_blocked_pct": 1.0,                 # all 7 frozen from onboarding flow
+            "regulatory_fine_floor_usd": 50000,            # P0 disclosure miss baseline
+            "regulatory_fine_ceiling_usd": 250000,         # FCA / 5MLD upper band
+            "support_cost_per_contact_usd": 12.40,
+            "baseline_trust_index": 0.91,                  # higher for KYC vs fraud
+            "trust_index_delta_per_false_match": -0.012,   # bigger hit per case
+        },
         alert_payload={
             "alert_id": "kyc-pep-fabrication-20260525T103015Z",
             "source": "kyc-screener-prod-eu-west1",
@@ -144,6 +170,16 @@ SCENARIOS: list[IncidentScenario] = [
         severity="P2",
         workflow="lending / credit underwriting",
         watched_project="underwriting-prod",
+        impact_seed={
+            "affected_decisions": 89,
+            "user_facing_timeouts": 12,
+            "avg_loan_amount_usd": 24500,
+            "avg_origination_fee_usd": 410,                # ~1.7% origination
+            "abandonment_rate_per_timeout_pct": 0.62,
+            "sla_credit_per_breached_decision_usd": 18.50, # contractual SLA credit
+            "baseline_trust_index": 0.78,
+            "trust_index_delta_per_timeout": -0.0025,
+        },
         alert_payload={
             "alert_id": "lending-p99-regression-20260524T143022Z",
             "source": "underwriting-prod-us-east1",

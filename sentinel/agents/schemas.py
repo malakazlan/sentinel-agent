@@ -250,6 +250,17 @@ class Postmortem(BaseModel):
         ),
     )
 
+    # Phase 8 / ADR-018 — optional structured impact section. Optional so
+    # legacy postmortems (and tests authored before Phase 8) still validate.
+    impact_quantified: Optional["ImpactReport"] = Field(
+        default=None,
+        description=(
+            "Structured impact: dollars, customer count, revenue estimate. "
+            "Populated by CustomerImpactQuantifier between root_cause and "
+            "postmortem stages. None when the agent is disabled or unavailable."
+        ),
+    )
+
     @model_validator(mode="after")
     def _timeline_entries_nonempty(self) -> "Postmortem":
         """No empty strings in the timeline."""
@@ -287,6 +298,92 @@ POSTMORTEM_REQUIRED_SECTIONS: tuple[str, ...] = (
     "action_items",
     "lessons_learned",
 )
+
+
+# ── Phase 8 / ADR-018 — CustomerImpactQuantifier output ───────────────────
+
+
+ImpactConfidence = Literal["seed_grounded", "scenario_inferred", "default_caveat"]
+"""Provenance tag for an ``ImpactReport``.
+
+- ``seed_grounded`` — every figure trace-able to a Scenario.impact_seed value.
+- ``scenario_inferred`` — figures derived from alert_payload data, no seed.
+- ``default_caveat`` — neither seed nor payload had usable data; zeros + caveats.
+"""
+
+
+class ImpactReport(BaseModel):
+    """Quantified customer + financial impact of an incident.
+
+    Read by VP / Finance / Customer Ops, not just engineering. Postmortems
+    without a dollar figure get filed and ignored; this schema fixes that
+    while constraining the LLM to grounded numbers via the
+    ``audit_citation_lines`` field (every claim must cite where it came from).
+    """
+
+    dollars_at_risk_usd: float = Field(
+        ..., ge=0,
+        description=(
+            "Total dollar exposure during the incident window. "
+            "Non-negative. Zero is acceptable only with caveat citation."
+        ),
+    )
+    customers_affected: int = Field(
+        ..., ge=0,
+        description="Distinct customer count impacted. Non-negative integer.",
+    )
+    transactions_affected: int = Field(
+        ..., ge=0,
+        description=(
+            "Affected transaction / decision / interaction count. "
+            "Non-negative integer."
+        ),
+    )
+    estimated_revenue_loss_usd: float = Field(
+        ..., ge=0,
+        description=(
+            "Estimated unrecoverable revenue (after refunds, retries). "
+            "May be smaller than ``dollars_at_risk_usd`` — the latter is "
+            "exposure, the former is realized loss."
+        ),
+    )
+    customer_trust_score_delta: float = Field(
+        ..., ge=-1.0, le=1.0,
+        description=(
+            "Modeled change in a 0-1 customer-trust index. Negative = trust "
+            "loss. Bounded in [-1, 1]. Source for figure must be in "
+            "audit_citation_lines."
+        ),
+    )
+    audit_citation_lines: list[str] = Field(
+        ..., min_length=1,
+        description=(
+            "One citation line per claim in this report. Each line names "
+            "the source (e.g. 'scenario.impact_seed.avg_transaction_usd=120'). "
+            "Required — a report without citations is rejected at schema time."
+        ),
+    )
+    confidence: ImpactConfidence = Field(
+        ...,
+        description="Provenance tag — how grounded the figures are.",
+    )
+    caveats: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Plain-language caveats the reader must know — missing data, "
+            "estimation method, etc. Empty list allowed only when confidence "
+            "is ``seed_grounded``."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _caveats_required_when_not_seed_grounded(self) -> "ImpactReport":
+        if self.confidence != "seed_grounded" and not self.caveats:
+            raise ValueError(
+                f"ImpactReport with confidence={self.confidence!r} must "
+                "include at least one caveat — figures are not seed-grounded."
+            )
+        return self
 
 
 # ── Phase 7 / Addition 4 / ADR-016 — CriticAgent output ───────────────────

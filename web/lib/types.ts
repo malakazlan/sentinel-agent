@@ -13,6 +13,7 @@ export type StageName =
   | "deploy_correlation" // Phase 7 / ADR-014 — GitHub MCP / DeployCorrelator
   | "root_cause"
   | "remediation"
+  | "customer_impact"    // Phase 8 / ADR-018 — CustomerImpactQuantifier
   | "postmortem";
 
 export interface IncidentStartedEvent {
@@ -134,6 +135,28 @@ export interface ActionItem {
   due_within_days: number;
 }
 
+/**
+ * Provenance tag for an ImpactReport (Phase 8 / ADR-018).
+ * Mirrors sentinel.agents.schemas.ImpactConfidence.
+ */
+export type ImpactConfidence = "seed_grounded" | "scenario_inferred" | "default_caveat";
+
+/**
+ * Quantified customer + financial impact, emitted by the
+ * CustomerImpactQuantifier sub-agent between root_cause and postmortem
+ * stages. Embedded under Postmortem.impact_quantified. Phase 8 / ADR-018.
+ */
+export interface ImpactReport {
+  dollars_at_risk_usd: number;
+  customers_affected: number;
+  transactions_affected: number;
+  estimated_revenue_loss_usd: number;
+  customer_trust_score_delta: number;
+  audit_citation_lines: string[];
+  confidence: ImpactConfidence;
+  caveats: string[];
+}
+
 export interface Postmortem {
   title: string;
   incident_id: string;
@@ -146,6 +169,10 @@ export interface Postmortem {
   resolution: string;
   action_items: ActionItem[];
   lessons_learned: string[];
+  // Phase 8 / ADR-018 — optional structured impact block (legacy
+  // postmortems may omit it; UI gracefully falls back to the prose
+  // `impact` field in that case).
+  impact_quantified?: ImpactReport | null;
 }
 
 export interface SeedSummary {

@@ -97,19 +97,21 @@ async def test_on_event_callback_fires_lifecycle_in_order() -> None:
     assert events[1].n_ok == 30
     assert events[1].n_error == 12
 
-    # 6 main stages × (started, completed) = 12 stage events, in order.
+    # 7 main stages × (started, completed) = 14 stage events, in order.
     # The chain is now investigate → eval_fanout → deploy_correlation →
-    # root_cause → remediation → postmortem (Phase 7 / ADR-012 + ADR-014).
+    # root_cause → remediation → customer_impact → postmortem
+    # (Phase 7 / ADR-012 + ADR-014; Phase 8 / ADR-018 added customer_impact).
     stage_events = [
         e for e in events if isinstance(e, (StageStartedEvent, StageCompletedEvent))
     ]
-    assert len(stage_events) == 12
+    assert len(stage_events) == 14
     expected_stages = [
         "investigate",
         "eval_fanout",
         "deploy_correlation",
         "root_cause",
         "remediation",
+        "customer_impact",
         "postmortem",
     ]
     for i, stage in enumerate(expected_stages):
@@ -190,14 +192,16 @@ async def test_no_callback_means_no_emission_no_crash() -> None:
         scenario = get_scenario("fraud-fp-burst")
         result = await run_end_to_end_scenario(scenario)  # no on_event
         assert result is not None
-        # Six main stages now run (Phase 7 / ADR-012 + ADR-014 added
-        # eval_fanout and deploy_correlation to the chain).
+        # Seven main stages now run (Phase 7 / ADR-012 + ADR-014 added
+        # eval_fanout and deploy_correlation; Phase 8 / ADR-018 added
+        # customer_impact between remediation and postmortem).
         assert [s.name for s in result.stages] == [
             "investigate",
             "eval_fanout",
             "deploy_correlation",
             "root_cause",
             "remediation",
+            "customer_impact",
             "postmortem",
         ]
 

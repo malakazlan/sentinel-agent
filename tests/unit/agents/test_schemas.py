@@ -299,10 +299,19 @@ def test_postmortem_rejects_stub_summary() -> None:
 
 
 def test_postmortem_required_sections_match_model_fields() -> None:
-    """POSTMORTEM_REQUIRED_SECTIONS must equal Postmortem's declared fields."""
-    model_fields = set(Postmortem.model_fields.keys())
+    """POSTMORTEM_REQUIRED_SECTIONS must equal the *required* Postmortem fields.
+
+    Optional fields (declared with a default value, e.g. ``impact_quantified``
+    in ADR-018) are model fields but NOT counted for completeness scoring —
+    a legacy postmortem without them must still score 1.000. So the tuple
+    equals only the required-fields subset.
+    """
+    required_fields = {
+        name for name, field in Postmortem.model_fields.items()
+        if field.is_required()
+    }
     declared = set(POSTMORTEM_REQUIRED_SECTIONS)
-    assert model_fields == declared, (
-        f"drift between Postmortem model_fields {model_fields} and "
+    assert required_fields == declared, (
+        f"drift between Postmortem required fields {required_fields} and "
         f"POSTMORTEM_REQUIRED_SECTIONS {declared} — sync the tuple"
     )

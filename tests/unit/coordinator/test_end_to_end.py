@@ -100,6 +100,15 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
         "\n```"
     )
 
+    # Canned ImpactReport for the new Phase 8 customer_impact stage.
+    impact_text = (
+        '```json\n{"dollars_at_risk_usd": 84293.20, "customers_affected": 312, '
+        '"transactions_affected": 1247, "estimated_revenue_loss_usd": 13668.18, '
+        '"customer_trust_score_delta": -0.281, "audit_citation_lines": '
+        '["transactions_affected=1247 [source: scenario.impact_seed.affected_transactions]"], '
+        '"confidence": "seed_grounded", "caveats": []}\n```'
+    )
+
     fake = _make_canned_stream(
         {
             "Investigate this incident": ("trace_analyzer", "Recent traces: 5 ERROR, 20 OK..."),
@@ -113,6 +122,10 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
             ),
             "hypothesize the root cause": ("root_cause", "1. Prompt regression (confidence: high)"),
             "draft a remediation plan": ("remediation", '{"severity":"P1","confidence":"high"}'),
+            "quantify the customer + financial impact": (
+                "customer_impact_quantifier",
+                impact_text,
+            ),
             "write the postmortem": ("postmortem", pm_text),
             "Score this postmortem against the four-dimension rubric": (
                 "critic",
@@ -125,14 +138,15 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
         result = await run_end_to_end_scenario(scenario)
 
     assert result.scenario_id == "fraud-fp-burst"
-    # 6 main stages + 1 critic iteration (accepted on first pass)
-    assert len(result.stages) == 7
+    # 7 main stages (Phase 8 added customer_impact) + 1 critic iteration
+    assert len(result.stages) == 8
     assert [s.name for s in result.stages] == [
         "investigate",
         "eval_fanout",
         "deploy_correlation",
         "root_cause",
         "remediation",
+        "customer_impact",
         "postmortem",
         "critic_iteration_1",
     ]

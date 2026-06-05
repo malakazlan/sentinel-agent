@@ -92,6 +92,15 @@ _EXPLICIT_USER_TRIGGERS: dict[str, tuple[str, ...]] = {
         "write up the incident",
         "incident write-up",
     ),
+    "customer_impact_quantifier": (
+        "quantify the customer",
+        "quantify the financial",
+        "customer impact",
+        "financial impact",
+        "dollars at risk",
+        "impact quantification",
+        "estimate revenue loss",
+    ),
 }
 
 
