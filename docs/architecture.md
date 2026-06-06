@@ -7,7 +7,7 @@ Open-source AI SRE framework. Multi-agent incident response for production AI wo
 
 This document is the canonical view of how the pieces fit together. All diagrams are [Mermaid](https://mermaid.live/) — they render natively on GitHub, in VS Code's Markdown preview (Ctrl+Shift+V; install the "Markdown Preview Mermaid Support" extension if a diagram shows as raw text), and at [mermaid.live](https://mermaid.live/).
 
-> **Last verified:** 2026-06-02 (Phase 7 complete: ParallelAgent eval fan-out, RAG memory, GitHub MCP + DeployCorrelator, CriticAgent + refinement loop, Slack MCP + SlackAnnouncer).
+> **Last verified:** 2026-06-05 (Phase 8 complete: 8 new agents — CustomerImpactQuantifier, ComplianceOfficer w/ regulatory RAG, PromptEvolver, PatternMiner, DriftDetective, BiasFairnessAuditor, SLOGuardian, HumanOverrideGate, SentinelMonitor; 9-page UI surface; 18 ADRs). Phase 7 (ParallelAgent eval fan-out, RAG memory, GitHub MCP + DeployCorrelator, CriticAgent + refinement loop, Slack MCP + SlackAnnouncer) remains the baseline.
 
 ---
 
@@ -461,3 +461,84 @@ All Gemini inference routes through Vertex AI in the `global` multi-regional end
 - The model swap happens again (Section 6 model table — link the new ADR).
 - A known limitation is resolved or a new one is surfaced (Section 7).
 - A new ADR lands (cross-reference where its effect shows in the diagrams).
+
+---
+
+## 9. Phase 8 layer (ADR-018 through ADR-027)
+
+Phase 8 added 8 new agents and a 9-page UI surface on top of the Phase 7 baseline. The pipeline shape is **investigate → eval_fanout → deploy_correlation → root_cause → remediation → customer_impact → postmortem → critic loop → compliance**. Three new SSE event types — `PromptEvolvedEvent`, `SLOBurnDetectedEvent`, `HumanGateAwaitingEvent` / `HumanGateResolvedEvent` — extend the existing union.
+
+```mermaid
+flowchart TB
+    subgraph Phase7["Phase 7 baseline (8 sub-agents)"]
+        P7TA["TraceAnalyzer"]
+        P7ER["EvalRunner"]
+        P7PER["ParallelEvalRunner"]
+        P7DC["DeployCorrelator"]
+        P7RC["RootCause"]
+        P7RM["Remediation"]
+        P7PM["Postmortem"]
+        P7CR["Critic"]
+        P7SLK["SlackAnnouncer"]
+    end
+
+    subgraph Phase8New["Phase 8 additions (8 agents + utilities)"]
+        P8CIQ["CustomerImpactQuantifier<br/>(ADR-018)"]
+        P8CO["ComplianceOfficer +<br/>regulatory RAG corpus<br/>(ADR-019)"]
+        P8PE["PromptEvolver +<br/>prompt_history store<br/>(ADR-020)"]
+        P8PMI["PatternMiner<br/>(ADR-021)"]
+        P8DD["DriftDetective<br/>(KS + PSI utilities)<br/>(ADR-022)"]
+        P8BFA["BiasFairnessAuditor<br/>(4/5ths + parity + EO)<br/>(ADR-023)"]
+        P8SLO["SLOGuardian<br/>(Google SRE Workbook §5)<br/>(ADR-024)"]
+        P8HG["HumanOverrideGate<br/>(ADR-025)"]
+        P8SM["SentinelMonitor<br/>(recursive observability)<br/>(ADR-026)"]
+    end
+
+    subgraph Phase8UI["Phase 8 UI surface (9 pages, ADR-027)"]
+        UI_PM["/incidents/[id]/postmortem<br/>+ impact + citations sections"]
+        UI_P["/patterns<br/>accept/reject buttons"]
+        UI_H["/sentinel-health"]
+        UI_PR["/prompts"]
+        UI_HI["/history (severity + scenario filters)"]
+        UI_A["/architecture (interactive)"]
+        UI_E["/evals (per-agent trends)"]
+    end
+
+    Phase7 --> Phase8New
+    Phase8New --> Phase8UI
+```
+
+### New schemas
+
+| Schema | Module | Purpose |
+|---|---|---|
+| `ImpactReport` | `sentinel/agents/schemas.py` | `$` + customer count + revenue + audit citations |
+| `CitedClause`, `ReportingObligation`, `ComplianceReport` | `sentinel/agents/schemas.py` | Regulator citations + reporting obligations (corpus-grounded) |
+| `PromptVariant`, `PromptVariantSet`, `ScoredVariant`, `PromptEvolutionProposal` | `sentinel/agents/prompt_evolver.py` | Prompt-evolution surface |
+| `PatternProposal` | `sentinel/agents/pattern_miner.py` | Mined recurring pattern + proposed mitigation |
+| `PerFeatureDrift`, `DriftReport` | `sentinel/agents/drift_detective.py` | Numeric (KS) + categorical (PSI) drift |
+| `FairnessAttributeFinding`, `FairnessReport` | `sentinel/agents/bias_fairness_auditor.py` | 4/5ths + statistical parity + equalized odds |
+| `SLOBurnFinding` | `sentinel/agents/slo_guardian.py` | Fast-burn + slow-burn budget assessment |
+| `PendingGate`, `ResolvedGate` | `sentinel/agents/human_override.py` | Synchronous approval gate records |
+| `AgentHealthSnapshot`, `SentinelHealthReport` | `sentinel/agents/sentinel_monitor.py` | Self-observation |
+
+### New API routes (additive — `docs/api-contract.md` baseline preserved)
+
+| Path | Method | Source ADR | Purpose |
+|---|---|---|---|
+| `/patterns` | GET | ADR-021 / 027 | Mined patterns with persisted accept/reject status |
+| `/patterns/{cluster_id}/accept` / `reject` | POST | ADR-021 | Operator decision sidecars |
+| `/sentinel/health` | GET | ADR-026 / 027 | Sentinel's own health snapshot |
+| `/prompts` | GET | ADR-020 / 027 | Per-agent prompt rollups |
+| `/prompts/{agent_name}/history` | GET | ADR-020 | Full per-agent record list |
+| `/evals/trends` | GET | ADR-027 | Critic trend data per agent + rubric dim |
+| `/architecture` | GET | ADR-027 | Agent registry shape |
+| `/incidents-history` | GET | ADR-027 | Filterable past-incident list |
+| `/gates` | GET | ADR-025 | Pending approval gates |
+| `/incidents/{id}/gate/{gate_id}/approve` / `reject` | POST | ADR-025 | Operator gate resolution |
+
+### Test totals (Phase 8 close)
+
+- **Backend:** 334 passing, 4 skipped.
+- **Frontend:** 25 Vitest passing (postmortem-document × 14 + api-phase8 × 11).
+- **Type check:** `tsc --noEmit` clean.
