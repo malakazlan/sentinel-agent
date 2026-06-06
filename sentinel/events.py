@@ -38,6 +38,8 @@ StageName = Literal[
     "investigate",
     "eval_fanout",  # Phase 7 / ADR-012 — ParallelEvalRunner fan-out stage
     "deploy_correlation",  # Phase 7 / ADR-014 — DeployCorrelator stage
+    "drift_detective",  # Phase 8 / ADR-022 — deterministic KS+PSI stage
+    "bias_fairness",  # Phase 8 / ADR-023 — deterministic 4/5ths+parity+EO stage
     "root_cause",
     "remediation",
     "customer_impact",  # Phase 8 / ADR-018 — CustomerImpactQuantifier stage

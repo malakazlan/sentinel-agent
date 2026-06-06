@@ -186,10 +186,15 @@ def test_seed_scenario_degrades_to_no_op_when_phoenix_unreachable(
 
     Real-world deployments point Sentinel at a customer-existing collector
     (Cloud Trace, Datadog, etc). That collector may be unreachable from
-    some networks. We degrade to ``spans_written=0`` with a WARNING log
-    rather than failing the entire incident pipeline. ADR-017.
+    some networks. We degrade to the in-process trace cache (Phase 8) and
+    emit a WARNING log rather than failing the entire incident pipeline
+    (ADR-017). The cache lets downstream agents read seeded spans via
+    ``get_recent_traces`` even when the OTLP write failed.
     """
     import httpx
+    from sentinel.tools.incident_sim import clear_trace_cache, get_cached_spans
+
+    clear_trace_cache()
 
     # Phoenix client that crashes on the actual network call, mimicking
     # a refused connection from inside a Cloud Run container.
@@ -201,12 +206,16 @@ def test_seed_scenario_degrades_to_no_op_when_phoenix_unreachable(
     with caplog.at_level("WARNING", logger="sentinel.tools.incident_sim"):
         summary = seed_scenario("fraud-fp-burst", client=failing_client)
 
-    # Degraded summary — project preserved for the UI, counts zeroed.
+    # Degraded summary — project preserved and the counts now reflect the
+    # cached spans (Phase 8 trace cache). The OTLP write failed but the
+    # cache write succeeded before the network call.
     assert isinstance(summary, SeedSummary)
     assert summary.project == "fraud-detector-prod"
-    assert summary.spans_written == 0
-    assert summary.n_ok == 0
-    assert summary.n_error == 0
+    assert summary.spans_written == 42, "expected 42 cached spans on degraded seed"
+    assert summary.n_ok == 30
+    assert summary.n_error == 12
+    # And the spans are indeed in the in-process cache for downstream readers.
+    assert len(get_cached_spans("fraud-detector-prod")) == 42
 
     # WARNING log carries the actionable detail: which collector, which
     # scenario, and the underlying error. No silent failure.

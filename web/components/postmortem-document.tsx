@@ -1,7 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import type {
   CitedClause,
+  DriftReport,
+  FairnessReport,
   ImpactReport,
+  PerFeatureDrift,
   Postmortem,
   ReportingObligation,
 } from "@/lib/types";
@@ -111,6 +114,9 @@ export function PostmortemDocument({
         citations={pm.regulatory_citations ?? []}
         obligations={pm.reporting_obligations ?? []}
       />
+
+      {pm.drift_analysis && <DriftSection report={pm.drift_analysis} />}
+      {pm.fairness_analysis && <FairnessSection report={pm.fairness_analysis} />}
 
       <section className="mb-7">
         <SectionLabel>Timeline</SectionLabel>
@@ -354,6 +360,199 @@ function RegulatoryExposureSection({
       )}
     </section>
   );
+}
+
+/**
+ * Drift analysis section — Phase 8 / ADR-022. Renders one row per
+ * feature with the test stat, p-value (KS) or PSI value, and a
+ * severity badge. Empty / insufficient-data rows are still surfaced
+ * so the reader knows the auditor looked at the feature.
+ */
+function DriftSection({ report }: { report: DriftReport }) {
+  return (
+    <section className="mb-7">
+      <SectionLabel>Distribution drift (KS + PSI)</SectionLabel>
+      <div className="mb-2.5 flex items-center gap-2 text-[13px] text-text-secondary">
+        <span>Aggregate severity:</span>
+        <Badge variant={severityBadgeVariant(report.aggregate_severity)}>
+          {report.aggregate_severity}
+        </Badge>
+        {report.insufficient_baseline_data && (
+          <span className="text-xs text-text-tertiary">
+            (insufficient baseline data on every feature)
+          </span>
+        )}
+      </div>
+      <div className="overflow-hidden rounded-md border border-border bg-bg">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border bg-bg-subtle">
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-tertiary">
+                Feature
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-tertiary">
+                Test
+              </th>
+              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-text-tertiary">
+                Statistic
+              </th>
+              <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-text-tertiary">
+                p-value
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-tertiary">
+                Severity
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.per_feature.map((f: PerFeatureDrift) => (
+              <tr
+                key={f.feature_name}
+                className="border-b border-border last:border-b-0"
+              >
+                <td className="px-4 py-2.5 font-mono text-[12.5px]">
+                  {f.feature_name}
+                </td>
+                <td className="px-4 py-2.5 font-mono text-xs text-text-secondary">
+                  {f.test.toUpperCase()}
+                </td>
+                <td className="px-4 py-2.5 text-right font-mono text-[12.5px] tabular-nums">
+                  {f.statistic.toFixed(4)}
+                </td>
+                <td className="px-4 py-2.5 text-right font-mono text-[12.5px] tabular-nums text-text-tertiary">
+                  {f.p_value != null ? f.p_value.toFixed(4) : "—"}
+                </td>
+                <td className="px-4 py-2.5">
+                  <Badge variant={severityBadgeVariant(f.severity)}>
+                    {f.severity}
+                  </Badge>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Fairness analysis section — Phase 8 / ADR-023. Renders per-attribute
+ * findings: reference group, disparate-impact ratios per group, parity
+ * differences, equalized-odds deltas. The methodology note grounds the
+ * metrics in EEOC + EU AI Act terms.
+ */
+function FairnessSection({ report }: { report: FairnessReport }) {
+  return (
+    <section className="mb-7">
+      <SectionLabel>Disparate impact + fairness audit</SectionLabel>
+      <div className="mb-2.5 flex items-center gap-2 text-[13px] text-text-secondary">
+        <span>Aggregate flag:</span>
+        <Badge variant={severityBadgeVariant(report.aggregate_flag)}>
+          {report.aggregate_flag}
+        </Badge>
+      </div>
+      <div className="mb-3 text-xs text-text-tertiary">
+        {report.methodology_note}
+      </div>
+      <div className="grid gap-3">
+        {report.by_attribute.map((finding) => (
+          <div
+            key={finding.attribute_name}
+            className="rounded-md border border-border bg-bg p-4"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[13.5px] font-semibold">
+                {finding.attribute_name}
+              </div>
+              <Badge variant={severityBadgeVariant(finding.flag)}>
+                {finding.flag}
+              </Badge>
+            </div>
+            <div className="mb-3 text-xs text-text-tertiary">
+              Reference group:{" "}
+              <span className="font-mono">{finding.reference_group}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <FairnessMetricBlock
+                label="Disparate impact (4/5ths)"
+                values={finding.disparate_impact_ratios}
+                threshold={0.8}
+                lowerIsBad
+              />
+              <FairnessMetricBlock
+                label="Statistical parity Δ"
+                values={finding.statistical_parity_differences}
+              />
+              <FairnessMetricBlock
+                label="Equalized odds Δ"
+                values={finding.equalized_odds_deltas}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FairnessMetricBlock({
+  label,
+  values,
+  threshold,
+  lowerIsBad,
+}: {
+  label: string;
+  values: Record<string, number>;
+  threshold?: number;
+  lowerIsBad?: boolean;
+}) {
+  return (
+    <div className="rounded border border-border bg-bg-subtle p-3">
+      <div className="mb-1.5 text-xs text-text-tertiary">{label}</div>
+      <ul className="space-y-1">
+        {Object.entries(values).map(([group, val]) => {
+          const bad =
+            threshold != null &&
+            (lowerIsBad ? val < threshold : Math.abs(val) > threshold);
+          return (
+            <li
+              key={group}
+              className={`flex items-baseline justify-between font-mono text-[12.5px] tabular-nums ${
+                bad ? "text-error" : ""
+              }`}
+            >
+              <span>{group}</span>
+              <span>{val.toFixed(3)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function severityBadgeVariant(
+  severity: string,
+): "ok" | "p2" | "p1" | "p0" {
+  switch (severity) {
+    case "none":
+    case "clean":
+    case "healthy":
+      return "ok";
+    case "watch":
+      return "p2";
+    case "significant":
+    case "degraded":
+      return "p1";
+    case "severe":
+    case "underperforming":
+    case "insufficient_baseline_data":
+    case "insufficient_data":
+      return "p0";
+    default:
+      return "p2";
+  }
 }
 
 /**

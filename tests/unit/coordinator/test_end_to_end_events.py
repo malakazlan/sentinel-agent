@@ -97,18 +97,20 @@ async def test_on_event_callback_fires_lifecycle_in_order() -> None:
     assert events[1].n_ok == 30
     assert events[1].n_error == 12
 
-    # 7 main stages × (started, completed) = 14 stage events, in order.
-    # The chain is now investigate → eval_fanout → deploy_correlation →
-    # root_cause → remediation → customer_impact → postmortem
-    # (Phase 7 / ADR-012 + ADR-014; Phase 8 / ADR-018 added customer_impact).
+    # 9 main stages × (started, completed) = 18 stage events, in order.
+    # Phase 8 added drift_detective + bias_fairness (deterministic
+    # compute, no LLM call) between deploy_correlation and root_cause,
+    # plus customer_impact between remediation and postmortem.
     stage_events = [
         e for e in events if isinstance(e, (StageStartedEvent, StageCompletedEvent))
     ]
-    assert len(stage_events) == 14
+    assert len(stage_events) == 18
     expected_stages = [
         "investigate",
         "eval_fanout",
         "deploy_correlation",
+        "drift_detective",
+        "bias_fairness",
         "root_cause",
         "remediation",
         "customer_impact",
@@ -120,8 +122,19 @@ async def test_on_event_callback_fires_lifecycle_in_order() -> None:
         assert isinstance(stage_events[i * 2 + 1], StageCompletedEvent)
         assert stage_events[i * 2 + 1].stage == stage
         assert stage_events[i * 2 + 1].latency_ms >= 0
-        assert "coordinator" in stage_events[i * 2 + 1].authors
-        assert stage_events[i * 2 + 1].final_text == "stub final text"
+        # Deterministic Phase 8 stages have a single author identifier
+        # (drift_detective / bias_fairness_auditor); LLM stages always
+        # include 'coordinator' in the author list because the
+        # coordinator transfer is recorded first.
+        is_deterministic = stage in ("drift_detective", "bias_fairness")
+        if is_deterministic:
+            assert any(
+                a in ("drift_detective", "bias_fairness_auditor")
+                for a in stage_events[i * 2 + 1].authors
+            )
+        else:
+            assert "coordinator" in stage_events[i * 2 + 1].authors
+            assert stage_events[i * 2 + 1].final_text == "stub final text"
 
     # The terminal event is incident_completed.
     assert isinstance(events[-1], IncidentCompletedEvent)
@@ -199,6 +212,8 @@ async def test_no_callback_means_no_emission_no_crash() -> None:
             "investigate",
             "eval_fanout",
             "deploy_correlation",
+            "drift_detective",
+            "bias_fairness",
             "root_cause",
             "remediation",
             "customer_impact",

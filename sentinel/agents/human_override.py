@@ -64,6 +64,17 @@ class ResolvedGate:
 _PENDING_STORE = Path("data/memory/pending_gates.jsonl")
 _RESOLVED_STORE = Path("data/memory/resolved_gates.jsonl")
 
+# Phase 8 — in-process awaiters. The orchestrator creates an
+# ``asyncio.Event`` per pending gate; the API endpoint resolving the
+# gate sets the event so the orchestrator unblocks within milliseconds
+# (no need to poll the JSONL file). Cloud Run single-instance mode (set
+# via ``--max-instances=1``) keeps requester + resolver on the same
+# event loop.
+import asyncio
+
+_resolution_events: dict[str, asyncio.Event] = {}
+_resolution_decisions: dict[str, str] = {}
+
 
 def is_action_gated(action_type: str) -> bool:
     """Whether ``action_type`` requires an approval gate per env config.
@@ -136,7 +147,34 @@ def resolve_gate(
             "resolved_at_iso": resolved.resolved_at_iso,
             "operator_note": resolved.operator_note,
         }) + "\n")
+    # Notify any awaiting orchestrator coroutine. Safe to call even
+    # when no awaiter is registered (the event won't exist).
+    _resolution_decisions[gate_id] = decision
+    event = _resolution_events.get(gate_id)
+    if event is not None:
+        event.set()
     return resolved
+
+
+async def await_resolution(gate_id: str, *, timeout_s: float) -> str:
+    """Block until ``gate_id`` is resolved or ``timeout_s`` elapses.
+
+    Returns the decision string: ``approved``, ``rejected``, or
+    ``timeout`` on the timeout fallback. The orchestrator awaits this
+    after emitting ``HumanGateAwaitingEvent`` on the SSE wire; the API
+    endpoints call ``resolve_gate`` which sets the in-process event.
+    """
+    if gate_id in _resolution_decisions:
+        return _resolution_decisions[gate_id]
+    event = _resolution_events.setdefault(gate_id, asyncio.Event())
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        resolve_gate(gate_id, "timeout", operator_note="auto-rejected on timeout")
+        return "timeout"
+    finally:
+        _resolution_events.pop(gate_id, None)
+    return _resolution_decisions.get(gate_id, "timeout")
 
 
 def list_pending() -> list[PendingGate]:

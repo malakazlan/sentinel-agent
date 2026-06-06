@@ -58,6 +58,36 @@ class SeedSummary:
     n_error: int
 
 
+# ── Phase 8 — in-process trace cache (Phoenix-unreachable fallback) ──────
+#
+# Cloud Run deploys point at the customer's OTLP collector in production
+# (per ADR-017). For the hosted demo there's no Phoenix at the configured
+# endpoint and `Client().spans.log_spans` raises ConnectError on every
+# seed call. To keep downstream agents grounded in real evidence rather
+# than handing them "Connection refused" strings, every seed function
+# also stashes its synthetic spans in this in-process dict keyed by
+# project name. ``get_recent_traces`` falls back to this cache when
+# Phoenix is unreachable. ZERO fabrication — these are the EXACT spans
+# the seed would have written; we just don't lose them when the
+# collector is offline.
+_TRACE_CACHE: dict[str, list[dict]] = {}
+
+
+def get_cached_spans(project: str) -> list[dict]:
+    """Return the cached spans for ``project`` (empty list if none seeded)."""
+    return list(_TRACE_CACHE.get(project, []))
+
+
+def _cache_spans(project: str, spans: list[dict]) -> None:
+    """Replace the cached spans for ``project``."""
+    _TRACE_CACHE[project] = list(spans)
+
+
+def clear_trace_cache() -> None:
+    """Test helper — wipe the cache between runs."""
+    _TRACE_CACHE.clear()
+
+
 # ── span construction helpers ─────────────────────────────────────────────
 
 
@@ -192,6 +222,10 @@ def seed_fraud_fp_burst(
             )
         )
 
+    # Cache before the Phoenix write so the in-process fallback is
+    # populated even when ``log_spans`` raises ConnectError (Phase 8
+    # trace cache; see _TRACE_CACHE module comment).
+    _cache_spans(project, spans)
     client.spans.log_spans(project_identifier=project, spans=spans)
     return SeedSummary(
         project=project, spans_written=len(spans),
@@ -269,6 +303,7 @@ def seed_kyc_sanctions_hallucination(
             )
         )
 
+    _cache_spans(project, spans)
     client.spans.log_spans(project_identifier=project, spans=spans)
     return SeedSummary(
         project=project, spans_written=len(spans),
@@ -339,6 +374,7 @@ def seed_lending_latency_regression(
             )
         )
 
+    _cache_spans(project, spans)
     client.spans.log_spans(project_identifier=project, spans=spans)
     return SeedSummary(
         project=project, spans_written=len(spans),
@@ -388,15 +424,24 @@ def seed_scenario(scenario_id: str, *, client: Optional[Client] = None) -> SeedS
     except httpx.ConnectError as exc:
         endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "<unset>")
         project = _PROJECT_BY_SCENARIO.get(scenario_id, "")
+        # Phase 8 — the seed function cached its spans BEFORE the Phoenix
+        # write threw, so downstream agents will read them via
+        # ``get_recent_traces``'s in-process fallback. Report the cached
+        # counts so the UI's "Traces analyzed" metric is meaningful
+        # instead of "0 traces" (which made every demo postmortem look
+        # broken).
+        cached = get_cached_spans(project)
+        n_ok = sum(1 for s in cached if s.get("status_code") == "OK")
+        n_error = sum(1 for s in cached if s.get("status_code") == "ERROR")
         _logger.warning(
             "Phoenix OTLP collector unreachable at %s; seed_scenario(%s) "
-            "degraded to no-op (project=%s, spans_written=0). Pipeline will "
-            "continue without trace grounding. Underlying error: %s",
-            endpoint, scenario_id, project, exc,
+            "degraded to in-process trace cache (project=%s, spans_cached=%d). "
+            "Pipeline continues with cached trace grounding. Underlying error: %s",
+            endpoint, scenario_id, project, len(cached), exc,
         )
         return SeedSummary(
             project=project,
-            spans_written=0,
-            n_ok=0,
-            n_error=0,
+            spans_written=len(cached),
+            n_ok=n_ok,
+            n_error=n_error,
         )

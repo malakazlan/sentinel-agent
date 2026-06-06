@@ -72,8 +72,18 @@ def get_recent_traces(hours_back: int = 1, limit: int = 20) -> str:
             end_time=end_time,
             limit=safe_limit * 4,
         )
-    except Exception as exc:  # surface as text for the LLM to explain to the user
-        return f"Failed to query Phoenix at this time. {type(exc).__name__}: {exc}"
+    except Exception as exc:  # noqa: BLE001 — degrade to cache on any Phoenix error
+        # Phase 8 — Phoenix unreachable / errored. The seed step caches
+        # synthetic spans in-process before attempting the Phoenix write,
+        # so we can still ground downstream agents in real evidence even
+        # when the OTLP collector is offline. ADR-017 covers the write
+        # side; this is the read-side counterpart.
+        from sentinel.tools.incident_sim import get_cached_spans
+
+        cached = get_cached_spans(project)
+        if not cached:
+            return f"Failed to query Phoenix at this time. {type(exc).__name__}: {exc}"
+        spans = cached
 
     root_spans = [s for s in spans if not s.get("parent_id")][:safe_limit]
 

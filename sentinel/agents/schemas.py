@@ -281,6 +281,32 @@ class Postmortem(BaseModel):
         ),
     )
 
+    # Phase 8 / ADR-022 + ADR-023 — drift + fairness sections produced
+    # deterministically by the DriftDetective + BiasFairnessAuditor
+    # pipeline stages. Stored as dicts (rather than typed sub-models)
+    # to avoid a forward-reference cycle between this schema and the
+    # agent-side report models. The orchestrator attaches the agent's
+    # ``report.model_dump()`` result. Optional so legacy postmortems
+    # still validate.
+    drift_analysis: Optional[dict] = Field(
+        default=None,
+        description=(
+            "KS (numeric) + PSI (categorical) drift analysis between the "
+            "baseline window and the incident window. Populated by the "
+            "DriftDetective stage. None when the stage didn't run or "
+            "insufficient baseline data was available."
+        ),
+    )
+    fairness_analysis: Optional[dict] = Field(
+        default=None,
+        description=(
+            "Disparate-impact (4/5ths rule) + statistical parity + "
+            "equalized odds analysis across protected attributes. "
+            "Populated by the BiasFairnessAuditor stage. None when the "
+            "stage didn't run or there was insufficient per-group data."
+        ),
+    )
+
     @model_validator(mode="after")
     def _timeline_entries_nonempty(self) -> "Postmortem":
         """No empty strings in the timeline."""

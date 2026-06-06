@@ -154,13 +154,16 @@ async def test_full_pipeline_succeeds_with_valid_postmortem_json() -> None:
         result = await run_end_to_end_scenario(scenario)
 
     assert result.scenario_id == "fraud-fp-burst"
-    # 7 main stages (Phase 8 / ADR-018 added customer_impact) + 1 critic
-    # iteration (accepted on first pass) + 1 compliance stage (ADR-019).
-    assert len(result.stages) == 9
+    # 9 main stages (Phase 8 added customer_impact, drift_detective,
+    # bias_fairness) + 1 critic iteration (accepted on first pass) + 1
+    # compliance stage (ADR-019).
+    assert len(result.stages) == 11
     assert [s.name for s in result.stages] == [
         "investigate",
         "eval_fanout",
         "deploy_correlation",
+        "drift_detective",
+        "bias_fairness",
         "root_cause",
         "remediation",
         "customer_impact",
@@ -235,9 +238,12 @@ async def test_pipeline_aborts_on_mid_stage_exception() -> None:
     with patch("sentinel.coordinator.stream_coordinator_with_chain", side_effect=crashing_stream):
         result = await run_end_to_end_scenario(scenario)
 
-    # Three stages completed (investigate, eval_fanout, deploy_correlation);
-    # root_cause failed → orchestrator aborts.
-    assert len(result.stages) == 3
+    # Five stages completed (investigate, eval_fanout, deploy_correlation,
+    # drift_detective, bias_fairness — the latter two are deterministic
+    # Phase 8 stages that run without an LLM call so they always
+    # succeed on the stub stream); root_cause is the first LLM stage
+    # after them and fails → orchestrator aborts.
+    assert len(result.stages) == 5
     assert result.error is not None
     assert "root_cause" in result.error
     assert "simulated mid-stage failure" in result.error

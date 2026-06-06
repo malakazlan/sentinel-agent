@@ -11,6 +11,8 @@ export type StageName =
   | "investigate"
   | "eval_fanout"        // Phase 7 / ADR-012 — ParallelEvalRunner fan-out
   | "deploy_correlation" // Phase 7 / ADR-014 — GitHub MCP / DeployCorrelator
+  | "drift_detective"    // Phase 8 / ADR-022 — KS + PSI drift detection
+  | "bias_fairness"      // Phase 8 / ADR-023 — 4/5ths + parity + equalized odds
   | "root_cause"
   | "remediation"
   | "customer_impact"    // Phase 8 / ADR-018 — CustomerImpactQuantifier
@@ -238,6 +240,39 @@ export interface ReportingObligation {
   draft_notification_headline: string;
 }
 
+/** Phase 8 / ADR-022 — KS + PSI per feature. */
+export interface PerFeatureDrift {
+  feature_name: string;
+  test: string;
+  statistic: number;
+  p_value: number | null;
+  severity: string;
+  baseline_summary: Record<string, number | null>;
+  incident_summary: Record<string, number | null>;
+}
+
+export interface DriftReport {
+  per_feature: PerFeatureDrift[];
+  aggregate_severity: string;
+  insufficient_baseline_data: boolean;
+}
+
+/** Phase 8 / ADR-023 — fairness audit per attribute. */
+export interface FairnessAttributeFinding {
+  attribute_name: string;
+  reference_group: string;
+  disparate_impact_ratios: Record<string, number>;
+  statistical_parity_differences: Record<string, number>;
+  equalized_odds_deltas: Record<string, number>;
+  flag: string;
+}
+
+export interface FairnessReport {
+  by_attribute: FairnessAttributeFinding[];
+  aggregate_flag: string;
+  methodology_note: string;
+}
+
 export interface Postmortem {
   title: string;
   incident_id: string;
@@ -259,6 +294,10 @@ export interface Postmortem {
   // Empty arrays are valid (no specific regulation matched).
   regulatory_citations?: CitedClause[];
   reporting_obligations?: ReportingObligation[];
+  // Phase 8 / ADR-022 + ADR-023 — deterministic compute reports
+  // attached after the corresponding pipeline stages.
+  drift_analysis?: DriftReport | null;
+  fairness_analysis?: FairnessReport | null;
 }
 
 export interface SeedSummary {

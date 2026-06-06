@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/topbar";
 import { Badge } from "@/components/ui/badge";
@@ -16,12 +16,18 @@ import { getIncident } from "@/lib/api";
 import { severityVariant } from "@/lib/severity";
 import type { IncidentEvent, IncidentResult, StageName } from "@/lib/types";
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
 const STAGES_IN_ORDER: { stage: StageName; name: string; model: string }[] = [
   { stage: "investigate", name: "Trace analyzer", model: "gemini-3.1-flash-lite" },
   // Phase 7 / ADR-012 — ParallelEvalRunner fan-out over 4 code-eval suites.
   { stage: "eval_fanout", name: "Eval fan-out", model: "ParallelAgent · 4 suites" },
   // Phase 7 / ADR-014 — DeployCorrelator queries GitHub MCP for commits/PRs.
   { stage: "deploy_correlation", name: "Deploy correlator", model: "gemini-3.1-flash-lite · GitHub MCP" },
+  // Phase 8 / ADR-022 — deterministic KS + PSI compute on cached spans.
+  { stage: "drift_detective", name: "Drift detective", model: "deterministic · KS + PSI" },
+  // Phase 8 / ADR-023 — deterministic 4/5ths + statistical parity + EO.
+  { stage: "bias_fairness", name: "Bias / fairness audit", model: "deterministic · 4/5ths + parity + EO" },
   { stage: "root_cause", name: "Root cause", model: "gemini-3.1-pro" },
   { stage: "remediation", name: "Remediation", model: "gemini-3.1-pro" },
   { stage: "postmortem", name: "Postmortem", model: "gemini-3.1-flash-lite" },
@@ -105,6 +111,35 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
   const completedEvent = stream.events.find(
     (e) => e.type === "incident_completed" || e.type === "incident_failed"
   );
+
+  // Phase 8 / ADR-025 — HumanOverrideGate banner. We surface ONLY the
+  // latest unresolved gate. A resolved (approved / rejected / timeout)
+  // gate is dismissed automatically.
+  const gateAwaiting = stream.events
+    .filter((e): e is Extract<IncidentEvent, { type: "human_gate_awaiting" }> => e.type === "human_gate_awaiting")
+    .slice()
+    .reverse()[0];
+  const gateResolved = stream.events
+    .filter((e): e is Extract<IncidentEvent, { type: "human_gate_resolved" }> => e.type === "human_gate_resolved")
+    .slice()
+    .reverse()[0];
+  const showGateBanner = Boolean(
+    gateAwaiting && (!gateResolved || gateResolved.gate_id !== gateAwaiting.gate_id),
+  );
+  const [gateActing, setGateActing] = useState(false);
+
+  async function resolveGate(decision: "approve" | "reject") {
+    if (!gateAwaiting) return;
+    setGateActing(true);
+    try {
+      await fetch(
+        `${API_BASE_URL}/incidents/${encodeURIComponent(params.id)}/gate/${encodeURIComponent(gateAwaiting.gate_id)}/${decision}`,
+        { method: "POST" },
+      );
+    } finally {
+      setGateActing(false);
+    }
+  }
 
   // ── SSE-drop fallback ──────────────────────────────────────────────
   //
@@ -243,6 +278,49 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
             <div className="font-mono text-[22px] font-medium tracking-tight">{formatMs(elapsedMs)}</div>
           </div>
         </div>
+
+        {/* Phase 8 / ADR-025 — HumanOverrideGate banner */}
+        {showGateBanner && gateAwaiting && (
+          <section className="mb-8 rounded-md border border-accent-border bg-accent-bg p-5">
+            <div className="mb-1 flex items-center gap-2">
+              <Badge variant="p1">Awaiting human approval</Badge>
+              <span className="text-[13px] font-semibold text-accent-text">
+                {gateAwaiting.action_type === "regulator_notification"
+                  ? "Regulator notification draft"
+                  : gateAwaiting.action_type}
+              </span>
+            </div>
+            <p className="mt-1 max-w-[860px] text-[14px] leading-relaxed text-text">
+              {gateAwaiting.action_summary}
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <Button
+                variant="primary"
+                onClick={() => resolveGate("approve")}
+                disabled={gateActing}
+              >
+                Approve
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => resolveGate("reject")}
+                disabled={gateActing}
+              >
+                Reject
+              </Button>
+              <span className="ml-2 text-xs text-text-tertiary">
+                Auto-rejects at {gateAwaiting.timeout_at_iso}
+              </span>
+            </div>
+          </section>
+        )}
+        {gateResolved && (
+          <section className="mb-6 rounded-md border border-border bg-bg-subtle px-4 py-2.5 text-[13px] text-text-secondary">
+            Gate {gateResolved.gate_id} resolved:{" "}
+            <span className="font-semibold text-text">{gateResolved.decision}</span>
+            {gateResolved.operator_note && ` · ${gateResolved.operator_note}`}
+          </section>
+        )}
 
         {/* Metric row */}
         <div className="mb-8 grid grid-cols-4 gap-4">
