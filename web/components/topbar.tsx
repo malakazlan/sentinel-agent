@@ -2,17 +2,39 @@ import Link from "next/link";
 import type { Route } from "next";
 import { cn } from "@/lib/utils";
 
+// Phase 8 / ADR-027 — expanded global nav. The per-incident links
+// (Live console, Postmortem) are still rendered conditionally on
+// ``incidentId`` so non-incident pages keep a clean header.
+type NavKey =
+  | "scenarios"
+  | "console"
+  | "postmortem"
+  | "patterns"
+  | "health"
+  | "prompts"
+  | "history"
+  | "architecture"
+  | "evals";
+
 interface TopbarProps {
-  active: "scenarios" | "console" | "postmortem";
+  active: NavKey;
   status?: { dot?: "ok" | "running" | "error"; label: string };
   context?: string;
   incidentId?: string;
 }
 
-type NavLink = { href: Route; label: string; key: "scenarios" | "console" | "postmortem" };
+type NavLink = { href: Route; label: string; key: NavKey };
 
 function buildNavLinks(incidentId?: string): NavLink[] {
-  const links: NavLink[] = [{ href: "/" as Route, label: "Scenarios", key: "scenarios" }];
+  const links: NavLink[] = [
+    { href: "/" as Route, label: "Scenarios", key: "scenarios" },
+    { href: "/history" as Route, label: "History", key: "history" },
+    { href: "/patterns" as Route, label: "Patterns", key: "patterns" },
+    { href: "/sentinel-health" as Route, label: "Health", key: "health" },
+    { href: "/prompts" as Route, label: "Prompts", key: "prompts" },
+    { href: "/evals" as Route, label: "Evals", key: "evals" },
+    { href: "/architecture" as Route, label: "Architecture", key: "architecture" },
+  ];
   if (incidentId) {
     const encoded = encodeURIComponent(incidentId);
     links.push({ href: `/incidents/${encoded}` as Route, label: "Live console", key: "console" });
