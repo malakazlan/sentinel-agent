@@ -238,7 +238,13 @@ async def stream_incident(incident_id: str) -> EventSourceResponse:
             except ValueError:
                 pass
 
-    return EventSourceResponse(event_generator())
+    # Explicit short ping interval. The default in sse-starlette is 15
+    # seconds, but Cloud Run / browser EventSource implementations have
+    # been observed dropping SSE connections during long Vertex calls
+    # (e.g. the 60–180s critic / compliance / eval-fanout stages). A
+    # 5-second :ping comment line is enough to keep every layer's idle
+    # timer reset.
+    return EventSourceResponse(event_generator(), ping=5)
 
 
 def _maybe_synthetic_terminal(state: _IncidentState) -> Iterable[dict[str, str]]:

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/topbar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,8 +12,9 @@ import { AgentStepper, type AgentStep, type StepStatus } from "@/components/agen
 import { RoutingCallout } from "@/components/routing-callout";
 import { DeterminismBars } from "@/components/determinism-bars";
 import { useIncidentStream } from "@/lib/sse";
+import { getIncident } from "@/lib/api";
 import { severityVariant } from "@/lib/severity";
-import type { IncidentEvent, StageName } from "@/lib/types";
+import type { IncidentEvent, IncidentResult, StageName } from "@/lib/types";
 
 const STAGES_IN_ORDER: { stage: StageName; name: string; model: string }[] = [
   { stage: "investigate", name: "Trace analyzer", model: "gemini-3.1-flash-lite" },
@@ -100,9 +102,41 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
   const postmortemValidated = stream.events.find(
     (e): e is Extract<IncidentEvent, { type: "postmortem_validated" }> => e.type === "postmortem_validated"
   );
-  const completed = stream.events.find(
+  const completedEvent = stream.events.find(
     (e) => e.type === "incident_completed" || e.type === "incident_failed"
   );
+
+  // ── SSE-drop fallback ──────────────────────────────────────────────
+  //
+  // Cloud Run / browser idle timeouts have been observed killing the
+  // SSE connection during the long post-postmortem stages (critic loop,
+  // compliance, memory write). When the EventSource fires onerror
+  // before a terminal event arrives, we kick over to polling
+  // GET /incidents/{id} so the page can still render the finished
+  // postmortem button instead of stalling on "Pipeline running…".
+  //
+  // The poll runs only when SSE is in an error state AND we haven't
+  // seen a terminal event yet. It backs off automatically once the
+  // backend reports the run finished.
+  const sseDroppedBeforeTerminal =
+    stream.status === "error" && !completedEvent;
+  const fallbackResult = useQuery<IncidentResult>({
+    queryKey: ["incident-fallback", params.id],
+    queryFn: ({ signal }) => getIncident(params.id, signal),
+    enabled: sseDroppedBeforeTerminal,
+    refetchInterval: (q) => {
+      const r = q.state.data as IncidentResult | undefined;
+      if (!r) return 5000;
+      // Stop polling once the backend reports either a final result
+      // (succeeded true/false) — running stays polled.
+      if ("succeeded" in r) return false;
+      return 5000;
+    },
+    retry: 0,
+  });
+  const fallbackFinished =
+    fallbackResult.data && "succeeded" in fallbackResult.data;
+  const completed = completedEvent || fallbackFinished;
 
   const elapsedMs = stream.events.length > 0
     ? stream.events[stream.events.length - 1]?.elapsed_ms ?? 0
@@ -195,8 +229,13 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
               {incidentStarted?.title ?? "Loading incident…"}
             </h1>
             <p className="mt-3.5 max-w-[760px] text-text-secondary">
-              Watched system: {incidentStarted?.watched_project ?? "—"}. Stream status: {stream.status}.
-              {stream.error && ` Error: ${stream.error}`}
+              Watched system: {incidentStarted?.watched_project ?? "—"}.{" "}
+              {sseDroppedBeforeTerminal && !fallbackFinished
+                ? "Live updates dropped — recovering from backend…"
+                : sseDroppedBeforeTerminal && fallbackFinished
+                ? "Live updates dropped — recovered final state from backend."
+                : `Stream status: ${stream.status}.`}
+              {stream.error && !sseDroppedBeforeTerminal && ` Error: ${stream.error}`}
             </p>
           </div>
           <div className="flex flex-col items-end gap-2 text-right">
