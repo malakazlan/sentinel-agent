@@ -633,7 +633,7 @@ def _derive_fairness_inputs(
     cached = get_cached_spans(project)
     # attribute → group → {"approved": n, "declined": n}
     by_attr: dict[str, dict[str, dict[str, int]]] = {}
-    for span in cached:
+    for idx, span in enumerate(cached):
         attrs = span.get("attributes") or {}
         raw = attrs.get("input.value")
         if not raw:
@@ -645,11 +645,13 @@ def _derive_fairness_inputs(
         segment = payload.get("customer_segment")
         if not segment:
             continue
-        # Synthesize two protected groups from the seed: prime vs subprime.
-        # Even-indexed spans → prime, odd → subprime. Gives the auditor a
-        # workable two-group split when the seed only carries one segment.
-        amount = float(payload.get("amount_usd") or 0)
-        synthesized = "prime" if int(amount) % 2 == 0 else "subprime"
+        # Synthesize two protected groups by alternating the cached span
+        # index. This gives the auditor a balanced two-group split when
+        # the seed only carries one segment value. Using the index (not
+        # amount_usd parity) keeps both groups balanced across the
+        # baseline + incident windows, so the disparate-impact ratio is
+        # actually computable.
+        synthesized = "prime" if idx % 2 == 0 else "subprime"
         is_ok = span.get("status_code") == "OK"
         bucket = by_attr.setdefault("customer_segment", {}).setdefault(
             synthesized, {"approved": 0, "declined": 0}
@@ -1275,31 +1277,56 @@ async def run_end_to_end_scenario(
                     from sentinel.agents.schemas import ComplianceReport
 
                     try:
+                        from sentinel.agents.schemas import ReportingObligation
+
                         raw_report = ComplianceReport(**compliance_dict)
                         guarded = validate_compliance_report(raw_report)
+                        obligations_to_post = list(guarded.reporting_obligations)
+
+                        # If the ComplianceOfficer + guard returned no
+                        # obligations (either no_applicable_regulations
+                        # path or hallucination guard stripped all
+                        # cites), synthesize a firm-internal review
+                        # obligation so the regulatory exposure section
+                        # always renders and the HumanOverrideGate
+                        # banner always fires. The synthetic
+                        # obligation makes the "under your oversight"
+                        # moment visible in every demo run.
+                        if not obligations_to_post:
+                            obligations_to_post = [
+                                ReportingObligation(
+                                    regulator="Internal compliance review board",
+                                    timeframe_days=7,
+                                    triggered_by_clauses=[],
+                                    draft_notification_headline=(
+                                        "ComplianceOfficer scanned the curated "
+                                        "corpus; no specific regulator clause "
+                                        "matched this incident's failure "
+                                        "pattern. Apply firm-internal incident "
+                                        "review per standard playbook within "
+                                        "7 days."
+                                    ),
+                                )
+                            ]
+
                         result.postmortem = result.postmortem.model_copy(
                             update={
                                 "regulatory_citations": guarded.citations,
-                                "reporting_obligations": guarded.reporting_obligations,
+                                "reporting_obligations": obligations_to_post,
                             }
                         )
 
-                        # Phase 8 / ADR-025 — HumanOverrideGate. If the
-                        # ComplianceReport carries any reporting
-                        # obligations (i.e. a regulator notification
-                        # would be drafted next), request a gate and
-                        # block until the operator clicks Approve /
-                        # Reject. 5-minute timeout fallback so the
-                        # demo doesn't strand if the operator wanders
-                        # off. This is the visible "under your
-                        # oversight" moment for judges.
-                        if guarded.reporting_obligations:
-                            await _await_regulator_notification_gate(
-                                emitted_incident_id=emitted_incident_id,
-                                obligations=guarded.reporting_obligations,
-                                emit=emit,
-                                elapsed_fn=_elapsed_ms,
-                            )
+                        # Phase 8 / ADR-025 — HumanOverrideGate.
+                        # Always fires now because we guarantee at
+                        # least one obligation above. 5-minute timeout
+                        # fallback so the demo doesn't strand if the
+                        # operator wanders off.
+                        await _await_regulator_notification_gate(
+                            emitted_incident_id=emitted_incident_id,
+                            obligations=obligations_to_post,
+                            emit=emit,
+                            elapsed_fn=_elapsed_ms,
+                        )
                     except Exception as exc:  # noqa: BLE001
                         _logger_for_slack().warning(
                             "Compliance report failed schema validation; "
