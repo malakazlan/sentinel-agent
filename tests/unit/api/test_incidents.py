@@ -75,16 +75,16 @@ async def test_stream_yields_events_until_terminal() -> None:
     _REGISTRY["t-incident"] = state
 
     # Pre-load some events
-    await state.queue.put(IncidentStartedEvent(
+    state.events.append(IncidentStartedEvent(
         incident_id="t-incident", elapsed_ms=0,
         scenario_id="fraud-fp-burst", severity="P1",
         title="test", watched_project="x",
     ))
-    await state.queue.put(StageStartedEvent(
+    state.events.append(StageStartedEvent(
         incident_id="t-incident", elapsed_ms=100,
         stage="investigate", prompt_preview="...",
     ))
-    await state.queue.put(IncidentCompletedEvent(
+    state.events.append(IncidentCompletedEvent(
         incident_id="t-incident", elapsed_ms=200, total_latency_ms=200,
     ))
     state.completed.set()
@@ -129,12 +129,12 @@ async def test_stream_terminates_on_incident_failed_event() -> None:
     )
     _REGISTRY["t-failed"] = state
 
-    await state.queue.put(IncidentStartedEvent(
+    state.events.append(IncidentStartedEvent(
         incident_id="t-failed", elapsed_ms=0,
         scenario_id="fraud-fp-burst", severity="P1",
         title="test", watched_project="x",
     ))
-    await state.queue.put(IncidentFailedEvent(
+    state.events.append(IncidentFailedEvent(
         incident_id="t-failed", elapsed_ms=50,
         error="RuntimeError: boom",
     ))
@@ -345,7 +345,7 @@ async def test_stream_terminates_when_runner_finishes_without_terminal_event() -
     _REGISTRY["t-bare"] = state
 
     # Only emit one non-terminal event, then mark completed.
-    await state.queue.put(IncidentStartedEvent(
+    state.events.append(IncidentStartedEvent(
         incident_id="t-bare", elapsed_ms=0,
         scenario_id="fraud-fp-burst", severity="P1",
         title="test", watched_project="x",
@@ -360,7 +360,129 @@ async def test_stream_terminates_when_runner_finishes_without_terminal_event() -
             async for line in resp.aiter_lines():
                 if line.startswith("data:"):
                     chunks.append(line[len("data:"):].strip())
-    # The single buffered event must reach the client; then the stream closes cleanly.
+    # The buffered event reaches the client; the SSE generator then
+    # synthesizes a terminal close-marker so EventSource clients don't
+    # see a bare connection drop (bug fixed 2026-06-06: reconnect to a
+    # finished incident showed "SSE connection error" because no
+    # terminal event was ever sent).
     import json
-    assert len(chunks) == 1
-    assert json.loads(chunks[0])["type"] == "incident_started"
+    assert len(chunks) == 2
+    types = [json.loads(c)["type"] for c in chunks]
+    assert types == ["incident_started", "incident_completed"]
+
+
+@pytest.mark.asyncio
+async def test_stream_reconnect_after_completion_replays_history() -> None:
+    """Reconnect-safety regression test.
+
+    User navigates away after the incident finishes, comes back, hits
+    the SSE endpoint again. The endpoint MUST replay the full event
+    history so the UI can rebuild state — otherwise the browser
+    EventSource fires onerror on the bare close and the UI surfaces
+    'SSE connection error'.
+    """
+    from sentinel.api.events import (
+        IncidentCompletedEvent,
+        IncidentStartedEvent,
+        StageStartedEvent,
+    )
+    from sentinel.api.incidents import _IncidentState, _REGISTRY
+
+    state = _IncidentState(
+        incident_id="t-replay",
+        scenario_id="fraud-fp-burst",
+        severity="P1",
+        title="test",
+    )
+    _REGISTRY["t-replay"] = state
+
+    # Simulate a fully-finished incident: full lifecycle in history,
+    # completed event already set.
+    state.events.append(IncidentStartedEvent(
+        incident_id="t-replay", elapsed_ms=0,
+        scenario_id="fraud-fp-burst", severity="P1",
+        title="test", watched_project="x",
+    ))
+    state.events.append(StageStartedEvent(
+        incident_id="t-replay", elapsed_ms=100,
+        stage="investigate", prompt_preview="...",
+    ))
+    state.events.append(IncidentCompletedEvent(
+        incident_id="t-replay", elapsed_ms=200, total_latency_ms=200,
+    ))
+    state.completed.set()
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        # First connection completes the stream.
+        async with client.stream("GET", "/incidents/t-replay/stream") as resp:
+            assert resp.status_code == 200
+            first_chunks = []
+            async for line in resp.aiter_lines():
+                if line.startswith("data:"):
+                    first_chunks.append(line[len("data:"):].strip())
+
+        # Now reconnect — this is the bug path. The new connection must
+        # see the FULL history, not an empty close.
+        async with client.stream("GET", "/incidents/t-replay/stream") as resp:
+            assert resp.status_code == 200
+            second_chunks = []
+            async for line in resp.aiter_lines():
+                if line.startswith("data:"):
+                    second_chunks.append(line[len("data:"):].strip())
+
+    import json
+    first_types = [json.loads(c)["type"] for c in first_chunks]
+    second_types = [json.loads(c)["type"] for c in second_chunks]
+    expected = ["incident_started", "stage_started", "incident_completed"]
+    assert first_types == expected
+    assert second_types == expected  # ← the fix: same replay on reconnect
+
+
+@pytest.mark.asyncio
+async def test_stream_concurrent_subscribers_each_receive_live_events() -> None:
+    """Two concurrent SSE connections must each get the full stream.
+
+    Pre-fix, the single asyncio.Queue meant the first consumer drained
+    each event and the second consumer saw nothing.
+    """
+    from sentinel.api.events import (
+        IncidentCompletedEvent,
+        IncidentStartedEvent,
+    )
+    from sentinel.api.incidents import _IncidentState, _REGISTRY
+
+    state = _IncidentState(
+        incident_id="t-concur",
+        scenario_id="fraud-fp-burst",
+        severity="P1",
+        title="test",
+    )
+    _REGISTRY["t-concur"] = state
+    state.events.append(IncidentStartedEvent(
+        incident_id="t-concur", elapsed_ms=0,
+        scenario_id="fraud-fp-burst", severity="P1",
+        title="test", watched_project="x",
+    ))
+    state.events.append(IncidentCompletedEvent(
+        incident_id="t-concur", elapsed_ms=100, total_latency_ms=100,
+    ))
+    state.completed.set()
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        async def collect():
+            async with client.stream("GET", "/incidents/t-concur/stream") as resp:
+                lines = []
+                async for line in resp.aiter_lines():
+                    if line.startswith("data:"):
+                        lines.append(line[len("data:"):].strip())
+                return lines
+
+        import asyncio
+        results = await asyncio.gather(collect(), collect())
+
+    import json
+    for chunks in results:
+        types = [json.loads(c)["type"] for c in chunks]
+        assert types == ["incident_started", "incident_completed"]

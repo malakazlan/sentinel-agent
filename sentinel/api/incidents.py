@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -28,11 +28,31 @@ router = APIRouter(prefix="/incidents", tags=["incidents"])
 
 @dataclass
 class _IncidentState:
+    """Per-incident broadcast state.
+
+    Each lifecycle event is appended to ``events`` AND fanned out to
+    every subscriber queue. New SSE connections register a fresh
+    subscriber queue, receive the full ``events`` history as a replay,
+    then read live events from their own queue.
+
+    This shape (history list + per-subscriber queues) replaces the
+    single-consumer ``asyncio.Queue`` that originally backed the SSE
+    endpoint. The original shape broke reconnect: a user who navigated
+    away and came back found the queue empty (already drained, or the
+    incident finished) and the SSE connection closed immediately, which
+    surfaced on the browser as ``SSE connection error``.
+    """
+
     incident_id: str
     scenario_id: str
     severity: str
     title: str
-    queue: asyncio.Queue[Any] = field(default_factory=asyncio.Queue)
+    # Append-only history for replay on reconnect.
+    events: list[Any] = field(default_factory=list)
+    # One queue per active SSE subscriber. The runner emits into every
+    # subscriber's queue so multiple connections (e.g. two browser tabs)
+    # all receive the same live stream.
+    subscribers: list[asyncio.Queue[Any]] = field(default_factory=list)
     result: EndToEndResult | None = None
     failed_with: str | None = None
     completed: asyncio.Event = field(default_factory=asyncio.Event)
@@ -89,19 +109,21 @@ async def create_incident(req: CreateIncidentRequest) -> CreateIncidentResponse:
 
 
 def _run_in_background(state: _IncidentState, scenario: IncidentScenario) -> None:
-    """Spawn the pipeline as an asyncio task; events fan out to the state queue.
+    """Spawn the pipeline as an asyncio task; events fan out to history + all subscribers.
 
-    The callback wraps queue.put in a no-raise guard so that a queue
-    failure (which shouldn't happen with an unbounded queue, but is
-    defended against per code-review feedback on Task 2) never masks
-    the original agent-side error.
+    Every event is (a) appended to ``state.events`` for reconnect replay,
+    and (b) put onto every active subscriber's queue. A failure in any
+    subscriber's queue is swallowed so it never masks the agent-side
+    error.
     """
 
     async def emit(event: Any) -> None:
-        try:
-            await state.queue.put(event)
-        except Exception:  # noqa: BLE001 — defense in depth, never mask
-            pass
+        state.events.append(event)
+        for q in list(state.subscribers):
+            try:
+                await q.put(event)
+            except Exception:  # noqa: BLE001 — defense in depth, never mask
+                pass
 
     async def runner() -> None:
         try:
@@ -110,16 +132,17 @@ def _run_in_background(state: _IncidentState, scenario: IncidentScenario) -> Non
             )
         except Exception as exc:  # noqa: BLE001 — surface to the client via the queue
             state.failed_with = f"{type(exc).__name__}: {exc}"
-            try:
-                await state.queue.put(
-                    IncidentFailedEvent(
-                        incident_id=state.incident_id,
-                        elapsed_ms=0,
-                        error=state.failed_with,
-                    )
-                )
-            except Exception:  # noqa: BLE001
-                pass
+            failed_event = IncidentFailedEvent(
+                incident_id=state.incident_id,
+                elapsed_ms=0,
+                error=state.failed_with,
+            )
+            state.events.append(failed_event)
+            for q in list(state.subscribers):
+                try:
+                    await q.put(failed_event)
+                except Exception:  # noqa: BLE001
+                    pass
         finally:
             state.completed.set()
 
@@ -130,41 +153,116 @@ def _run_in_background(state: _IncidentState, scenario: IncidentScenario) -> Non
 async def stream_incident(incident_id: str) -> EventSourceResponse:
     """Stream this incident's lifecycle events as SSE.
 
-    Each `data:` line is one JSON-encoded `IncidentEvent`. The stream
-    closes when an `incident_completed` or `incident_failed` terminal
+    Each ``data:`` line is one JSON-encoded ``IncidentEvent``. The stream
+    closes when an ``incident_completed`` or ``incident_failed`` terminal
     event is sent.
+
+    Reconnect-safe: a new SSE connection first replays the full event
+    history (so a user who navigates away and comes back sees the same
+    state), then receives any subsequent events live via a dedicated
+    subscriber queue. Concurrent connections (multiple browser tabs)
+    each get their own subscriber queue and observe the same stream.
     """
     state = _REGISTRY.get(incident_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"Unknown incident: {incident_id}")
 
     async def event_generator() -> AsyncIterator[dict[str, str]]:
-        completed_task = asyncio.create_task(state.completed.wait())
+        # Register this connection's subscriber queue BEFORE replaying
+        # history. Otherwise a live event emitted between "snapshot
+        # history" and "subscribe" would be dropped.
+        subscriber: asyncio.Queue[Any] = asyncio.Queue()
+        state.subscribers.append(subscriber)
         try:
-            while True:
-                getter = asyncio.create_task(state.queue.get())
-                done, _ = await asyncio.wait(
-                    {getter, completed_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if getter in done:
-                    event = getter.result()
-                    yield {"data": event.model_dump_json()}
-                    if isinstance(event, (IncidentCompletedEvent, IncidentFailedEvent)):
-                        return
-                else:
-                    # Runner finished without a terminal event. Drain any
-                    # buffered events, then exit.
-                    getter.cancel()
-                    while not state.queue.empty():
-                        event = state.queue.get_nowait()
+            # Snapshot current history. Any events emitted while we're
+            # iterating it will also land in ``subscriber`` (registered
+            # above) and will be drained in the live loop below.
+            history_snapshot = list(state.events)
+            saw_terminal_in_history = False
+            for event in history_snapshot:
+                yield {"data": event.model_dump_json()}
+                if isinstance(event, (IncidentCompletedEvent, IncidentFailedEvent)):
+                    saw_terminal_in_history = True
+                    break
+            if saw_terminal_in_history:
+                # The incident already finished and the terminal event
+                # was in history. Done.
+                return
+
+            # If the incident finished while we were replaying history,
+            # there's still no terminal event to send — emit a synthetic
+            # one so the client closes cleanly instead of seeing a bare
+            # connection drop (which surfaces as ``SSE connection error``
+            # on the EventSource).
+            if state.completed.is_set():
+                for ev in _maybe_synthetic_terminal(state):
+                    yield ev
+                return
+
+            completed_task = asyncio.create_task(state.completed.wait())
+            try:
+                while True:
+                    getter = asyncio.create_task(subscriber.get())
+                    done, _ = await asyncio.wait(
+                        {getter, completed_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if getter in done:
+                        event = getter.result()
                         yield {"data": event.model_dump_json()}
-                    return
+                        if isinstance(event, (IncidentCompletedEvent, IncidentFailedEvent)):
+                            return
+                    else:
+                        # Runner finished without a terminal event mid-loop.
+                        # Drain any buffered events, then synthesize a
+                        # terminal close-marker.
+                        getter.cancel()
+                        while not subscriber.empty():
+                            event = subscriber.get_nowait()
+                            yield {"data": event.model_dump_json()}
+                            if isinstance(
+                                event, (IncidentCompletedEvent, IncidentFailedEvent)
+                            ):
+                                return
+                        for ev in _maybe_synthetic_terminal(state):
+                            yield ev
+                        return
+            finally:
+                if not completed_task.done():
+                    completed_task.cancel()
         finally:
-            if not completed_task.done():
-                completed_task.cancel()
+            # Always deregister our subscriber so the emit fan-out
+            # doesn't grow a queue per orphaned connection.
+            try:
+                state.subscribers.remove(subscriber)
+            except ValueError:
+                pass
 
     return EventSourceResponse(event_generator())
+
+
+def _maybe_synthetic_terminal(state: _IncidentState) -> Iterable[dict[str, str]]:
+    """Yield a synthetic terminal event so SSE clients close cleanly.
+
+    Used when the runner finished without ever emitting a terminal
+    event (a defensive path that protects against runner bugs). Picks
+    ``incident_failed`` if the runner captured an error, otherwise
+    ``incident_completed`` with the recorded latency.
+    """
+    if state.failed_with is not None:
+        terminal = IncidentFailedEvent(
+            incident_id=state.incident_id,
+            elapsed_ms=0,
+            error=state.failed_with,
+        )
+    else:
+        latency = state.result.total_latency_ms if state.result else 0
+        terminal = IncidentCompletedEvent(
+            incident_id=state.incident_id,
+            elapsed_ms=latency,
+            total_latency_ms=latency,
+        )
+    yield {"data": terminal.model_dump_json()}
 
 
 @router.get("/{incident_id}")
