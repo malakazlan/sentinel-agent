@@ -109,40 +109,46 @@ def _attr(rec: Any, key: str, default: Any) -> Any:
 
 @router.get("/sentinel/health")
 def sentinel_health() -> dict[str, Any]:
-    """Return Sentinel's own per-agent health snapshot."""
-    store = shared_prompt_history()
-    agent_names = store.all_agent_names()
-    snapshots: list[dict[str, Any]] = []
-    for name in agent_names:
-        rollup = store.rollup_for_agent(name)
-        if rollup is None:
-            continue
-        snapshots.append({
-            "agent_name": rollup.agent_name,
-            "current_prompt_version": rollup.current_prompt_version,
-            "sample_count": rollup.sample_count,
-            "avg_aggregate_score": round(rollup.avg_aggregate_score, 4),
-            "avg_rubric_scores": {
-                k: round(v, 4)
-                for k, v in rollup.avg_rubric_scores.items()
-            },
-            "last_record_timestamp": rollup.last_record_timestamp,
-            "health_flag": _classify_health(rollup.avg_aggregate_score),
-        })
-    return {
-        "agents": snapshots,
-        "history_total": len(store.load_all()),
-    }
+    """Return Sentinel's own per-agent health snapshot.
+
+    Delegates to ``sentinel.agents.sentinel_monitor.build_health_report``
+    so the page + a future CLI share one computation. ADR-026.
+    """
+    from sentinel.agents.sentinel_monitor import build_health_report
+    report = build_health_report()
+    return report.model_dump()
 
 
-def _classify_health(score: float) -> str:
-    if score >= 0.90:
-        return "healthy"
-    if score >= 0.80:
-        return "watch"
-    if score >= 0.70:
-        return "degraded"
-    return "underperforming"
+# ── Human override gates (TASK 7 — ADR-025) ───────────────────────────────
+
+
+@router.get("/gates")
+def list_gates() -> dict[str, Any]:
+    """Return all pending (unresolved) approval gates."""
+    from sentinel.agents.human_override import list_pending
+    pending = list_pending()
+    return {"gates": [{
+        "gate_id": g.gate_id,
+        "incident_id": g.incident_id,
+        "action_type": g.action_type,
+        "action_summary": g.action_summary,
+        "requested_at_iso": g.requested_at_iso,
+        "timeout_at_iso": g.timeout_at_iso,
+    } for g in pending]}
+
+
+@router.post("/incidents/{incident_id}/gate/{gate_id}/approve")
+def approve_gate(incident_id: str, gate_id: str) -> dict[str, str]:
+    from sentinel.agents.human_override import resolve_gate
+    resolve_gate(gate_id, "approved")
+    return {"gate_id": gate_id, "incident_id": incident_id, "decision": "approved"}
+
+
+@router.post("/incidents/{incident_id}/gate/{gate_id}/reject")
+def reject_gate(incident_id: str, gate_id: str) -> dict[str, str]:
+    from sentinel.agents.human_override import resolve_gate
+    resolve_gate(gate_id, "rejected")
+    return {"gate_id": gate_id, "incident_id": incident_id, "decision": "rejected"}
 
 
 # ── Prompts (TASK 3 → /prompts page) ─────────────────────────────────────

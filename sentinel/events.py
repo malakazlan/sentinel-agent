@@ -81,6 +81,36 @@ class SimilarIncidentSummary(BaseModel):
     similarity: float = Field(..., ge=0.0, le=1.0)
 
 
+class SLOBurnDetectedEvent(_EventBase):
+    """Fast-burn or slow-burn SLO alert. Phase 8 / ADR-024."""
+
+    type: Literal["slo_burn_detected"] = "slo_burn_detected"
+    slo_name: str
+    target: float
+    fast_burn_pct: float
+    slow_burn_pct: float
+    severity: str  # "ok" | "ticket" | "page"
+
+
+class HumanGateAwaitingEvent(_EventBase):
+    """A destructive action is paused awaiting human approval. ADR-025."""
+
+    type: Literal["human_gate_awaiting"] = "human_gate_awaiting"
+    gate_id: str
+    action_type: str
+    action_summary: str = Field(..., max_length=600)
+    timeout_at_iso: str
+
+
+class HumanGateResolvedEvent(_EventBase):
+    """Gate released — approved, rejected, or timed out. ADR-025."""
+
+    type: Literal["human_gate_resolved"] = "human_gate_resolved"
+    gate_id: str
+    decision: str  # approved | rejected | timeout
+    operator_note: str = ""
+
+
 class PromptEvolvedEvent(_EventBase):
     """A prompt-evolution proposal landed (recommended OR no-improvement).
 
@@ -175,6 +205,9 @@ _EVENT_UNION = Annotated[
         IncidentCompletedEvent,
         IncidentFailedEvent,
         PromptEvolvedEvent,
+        SLOBurnDetectedEvent,
+        HumanGateAwaitingEvent,
+        HumanGateResolvedEvent,
     ],
     Field(discriminator="type"),
 ]

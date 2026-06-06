@@ -127,6 +127,39 @@ export interface PromptEvolvedEvent {
   decision_rationale: string;
 }
 
+/** SLO fast-burn / slow-burn alert — Phase 8 / ADR-024. */
+export interface SLOBurnDetectedEvent {
+  type: "slo_burn_detected";
+  incident_id: string;
+  elapsed_ms: number;
+  slo_name: string;
+  target: number;
+  fast_burn_pct: number;
+  slow_burn_pct: number;
+  severity: string;
+}
+
+/** Human-approval gate awaiting decision — Phase 8 / ADR-025. */
+export interface HumanGateAwaitingEvent {
+  type: "human_gate_awaiting";
+  incident_id: string;
+  elapsed_ms: number;
+  gate_id: string;
+  action_type: string;
+  action_summary: string;
+  timeout_at_iso: string;
+}
+
+/** Human-approval gate resolved — Phase 8 / ADR-025. */
+export interface HumanGateResolvedEvent {
+  type: "human_gate_resolved";
+  incident_id: string;
+  elapsed_ms: number;
+  gate_id: string;
+  decision: string;
+  operator_note: string;
+}
+
 export type IncidentEvent =
   | IncidentStartedEvent
   | BriefingResolvedEvent
@@ -136,7 +169,10 @@ export type IncidentEvent =
   | PostmortemValidatedEvent
   | IncidentCompletedEvent
   | IncidentFailedEvent
-  | PromptEvolvedEvent;
+  | PromptEvolvedEvent
+  | SLOBurnDetectedEvent
+  | HumanGateAwaitingEvent
+  | HumanGateResolvedEvent;
 
 // ── REST response shapes ──────────────────────────────────────────────────
 
