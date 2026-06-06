@@ -556,6 +556,37 @@ def _extract_compliance_json(text: str) -> Optional[dict]:
     return _extract_postmortem_json(text)
 
 
+def _extract_impact_report(stages: list["StageResult"]) -> Optional["ImpactReport"]:
+    """Find the customer_impact stage's ImpactReport JSON and return it parsed.
+
+    PostmortemAgent's prompt asks it to embed the prior stage's
+    ImpactReport verbatim under ``impact_quantified``, but model
+    compliance is unreliable — we've observed empty fields in the
+    final postmortem even when the customer_impact stage produced a
+    perfectly-valid report. This extractor pulls it deterministically
+    from the stage record so the orchestrator can attach it.
+
+    Returns None when the stage didn't run, didn't produce a parseable
+    JSON block, or the JSON didn't validate against the ImpactReport
+    schema. Phase 8 / ADR-018.
+    """
+    from sentinel.agents.schemas import ImpactReport
+
+    impact_stage = next(
+        (s for s in stages if s.name == "customer_impact"),
+        None,
+    )
+    if impact_stage is None:
+        return None
+    impact_dict = _extract_postmortem_json(impact_stage.final_text)
+    if impact_dict is None:
+        return None
+    try:
+        return ImpactReport(**impact_dict)
+    except Exception:  # noqa: BLE001 — best-effort; postmortem ships without
+        return None
+
+
 async def _maybe_announce_to_slack(
     event_type: str,
     payload: dict,
@@ -861,6 +892,18 @@ async def run_end_to_end_scenario(
             try:
                 result.postmortem = Postmortem(**pm_dict)
                 result.completeness = completeness_score(result.postmortem)
+                # Phase 8 / ADR-018 — attach the structured ImpactReport
+                # from the prior customer_impact stage. The PostmortemAgent
+                # is asked to embed it via prompt, but model compliance
+                # with multi-turn structured-data carry-forward is
+                # unreliable. We attach deterministically here so
+                # ``postmortem.impact_quantified`` is populated whenever
+                # the customer_impact stage produced a valid report.
+                impact_report = _extract_impact_report(result.stages)
+                if impact_report is not None:
+                    result.postmortem = result.postmortem.model_copy(
+                        update={"impact_quantified": impact_report}
+                    )
             except Exception as exc:
                 result.error = (
                     f"postmortem JSON failed schema validation: "
@@ -937,6 +980,15 @@ async def run_end_to_end_scenario(
             # ``result.postmortem.reporting_obligations`` so the
             # PostmortemValidatedEvent carries them.
             try:
+                # Reset the regulatory_search session so the
+                # hallucination guard only considers citations from this
+                # turn's search calls (not bleed-over from a prior
+                # incident's run on the same process). Phase 8 / ADR-019.
+                from sentinel.tools.regulatory_search import (
+                    regulatory_search as _regsearch,
+                )
+                _regsearch.reset_session()
+
                 compliance_prompt = (
                     "Now identify the regulatory exposure for this "
                     "incident. Call ``search_regulations`` 2-3 times "

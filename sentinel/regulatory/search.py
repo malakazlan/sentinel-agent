@@ -64,6 +64,13 @@ class RegulatorySearch:
     _records: list[dict[str, Any]] = field(default_factory=list)
     _embeddings: list[list[float]] = field(default_factory=list)
     _embedder: Optional[Any] = None
+    # Accumulates citation keys returned across every
+    # ``semantic_search`` call between successive ``reset_session()``
+    # calls. The orchestrator calls ``reset_session()`` before invoking
+    # the ComplianceOfficerAgent so any citation the agent emits that
+    # appeared in ANY of its 2-3 search calls survives the guard. Prior
+    # implementations only tracked the LAST call's results, which
+    # incorrectly rejected legitimate cites from earlier queries.
     last_results: set[tuple[str, str]] = field(default_factory=set)
 
     @classmethod
@@ -199,14 +206,27 @@ class RegulatorySearch:
                     similarity=float(sim),
                 )
             )
-        self.last_results = {r.citation_key for r in out}
+        # UNION (don't replace) — the agent makes 2-3 search calls per
+        # turn and citations from any of those calls must survive the
+        # guard. Reset between agent invocations via reset_session().
+        self.last_results.update({r.citation_key for r in out})
         return out
+
+    def reset_session(self) -> None:
+        """Clear the accumulated ``last_results`` set.
+
+        The orchestrator calls this before invoking the
+        ComplianceOfficerAgent so the guard only considers citations
+        from THIS turn's search calls, not stale results from a prior
+        incident's run.
+        """
+        self.last_results = set()
 
     # ── hallucination guard ────────────────────────────────────────────
 
     def is_citation_grounded(self, regulation_short_name: str, clause_id: str) -> bool:
-        """Return True iff ``(regulation_short_name, clause_id)`` was in
-        the most recent ``semantic_search`` result set.
+        """Return True iff ``(regulation_short_name, clause_id)`` appeared
+        in ANY ``semantic_search`` call since the last ``reset_session()``.
 
         The ComplianceOfficer's post-LLM validator calls this for every
         cited clause. False → that citation gets rejected and replaced
