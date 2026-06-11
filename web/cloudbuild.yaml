@@ -12,7 +12,8 @@
 # build args; a config file does.
 
 substitutions:
-  _API_URL: "http://localhost:8000"  # default for local builds
+  _API_URL: "http://localhost:8000"      # default for local builds
+  _PHOENIX_URL: "http://localhost:6006"  # default for local builds
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -20,6 +21,8 @@ steps:
       - build
       - "--build-arg"
       - "NEXT_PUBLIC_API_BASE_URL=${_API_URL}"
+      - "--build-arg"
+      - "NEXT_PUBLIC_PHOENIX_URL=${_PHOENIX_URL}"
       - "-t"
       - "us-central1-docker.pkg.dev/${PROJECT_ID}/sentinel/sentinel-web:latest"
       - "."
