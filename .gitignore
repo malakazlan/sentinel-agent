@@ -20,6 +20,7 @@ CLAUDE.md
 .claude/
 context/
 docs/superpowers/
+design/
 
 # Next.js frontend
 web/node_modules/
