@@ -5,6 +5,7 @@
 **Live URLs:**
 - **App:** https://sentinel-web-586014642476.us-central1.run.app
 - **API:** https://sentinel-api-586014642476.us-central1.run.app
+- **Phoenix (trace explorer):** https://sentinel-phoenix-586014642476.us-central1.run.app
 
 [![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 ![Tests: 334 backend + 25 frontend](https://img.shields.io/badge/tests-334%20backend%20%2B%2025%20frontend-brightgreen)

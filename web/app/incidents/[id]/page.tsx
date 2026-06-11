@@ -18,6 +18,13 @@ import type { IncidentEvent, IncidentResult, StageName } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+// Phoenix trace-tree URL surfaced on the incident footer + the "View
+// Phoenix" button. Defaults to the dev port; production deploys
+// override via NEXT_PUBLIC_PHOENIX_URL (baked into the bundle at build
+// time, same pattern as NEXT_PUBLIC_API_BASE_URL).
+const PHOENIX_URL =
+  process.env.NEXT_PUBLIC_PHOENIX_URL ?? "http://localhost:6006";
+
 const STAGES_IN_ORDER: { stage: StageName; name: string; model: string }[] = [
   { stage: "investigate", name: "Trace analyzer", model: "gemini-3.1-flash-lite" },
   // Phase 7 / ADR-012 — ParallelEvalRunner fan-out over 4 code-eval suites.
@@ -435,12 +442,25 @@ export default function IncidentPage({ params }: { params: { id: string } }) {
         <div className="mt-10 flex items-center justify-between border-t border-border py-5">
           <div className="text-[13px] text-text-tertiary">
             Phoenix trace tree available at{" "}
-            <span className="font-mono text-text-secondary">localhost:6006</span>
+            <a
+              href={PHOENIX_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-text-secondary underline-offset-2 hover:underline"
+            >
+              {new URL(PHOENIX_URL).host}
+            </a>
           </div>
           <div className="flex gap-2">
-            <Button variant="secondary" disabled={!completed}>
-              {completed ? "View Phoenix" : "Waiting for run to finish…"}
-            </Button>
+            <a
+              href={PHOENIX_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Button variant="secondary" disabled={!completed}>
+                {completed ? "View Phoenix" : "Waiting for run to finish…"}
+              </Button>
+            </a>
             {completed ? (
               <Link href={`/incidents/${encodeURIComponent(params.id)}/postmortem` as Route}>
                 <Button variant="primary">View postmortem →</Button>
