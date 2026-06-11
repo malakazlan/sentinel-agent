@@ -46,9 +46,16 @@ _run_*.py
 _run_*.out
 _run_*.stderr
 
-# ── Local Phoenix + memory state (machine-local, never shipped) ──────
+# ── Local Phoenix + memory state ──────────────────────────────────────
+# Phoenix state stays local. Memory state too — EXCEPT the demo seed
+# JSONLs which ship in the image so /prompts /sentinel-health /evals
+# and the briefing's similar-incidents recall render with grounded
+# data on every fresh container start (Cloud Run is stateless). The
+# scripts/bake_demo_seed.py regenerates these deterministically.
 .phoenix
-data/memory
+data/memory/*
+!data/memory/prompt_history.jsonl
+!data/memory/incidents.jsonl
 
 # ── Frontend (built separately via web/Dockerfile) ───────────────────
 web

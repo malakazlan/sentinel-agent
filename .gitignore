@@ -36,4 +36,8 @@ web/tests-e2e/.auth/
 node_modules/
 
 # Phase 7 / ADR-013 — local incident memory store (machine-local; not public)
-data/memory/
+# Demo seeds (prompt_history.jsonl, incidents.jsonl) are an exception —
+# they ship in the Docker image so the live URL renders populated pages.
+data/memory/*
+!data/memory/prompt_history.jsonl
+!data/memory/incidents.jsonl

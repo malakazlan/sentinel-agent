@@ -39,6 +39,14 @@ COPY sentinel ./sentinel
 COPY evals ./evals
 COPY LICENSE ./LICENSE
 
+# Phase 8 demo seed data. Cloud Run containers are stateless; without
+# baked-in seeds, the /prompts, /sentinel-health, /evals, and /patterns
+# pages render empty on every fresh container start (and the briefing's
+# "similar past incidents" recall has no corpus). The seeds are
+# regenerated deterministically via ``scripts/bake_demo_seed.py``.
+# .dockerignore selectively allows data/memory through.
+COPY data/memory ./data/memory
+
 # Cloud Run injects $PORT; default to 8080 so the image runs locally too.
 ENV PORT=8080
 EXPOSE 8080
